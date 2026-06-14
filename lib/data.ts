@@ -58,21 +58,36 @@ export const STAPLES = [
 
 // ---- Idea banks ----
 export const LAZY_IDEAS = [
-  "Loaded nachos (ground beef, cheese, refried beans)", "Burger bowls (one pan)", "Beans & bacon (one pot)", "Hot dogs + chips + fruit",
-  "Bagged salad + rotisserie chicken", "Sheet-pan sausage + frozen veg", "Tacos with pre-cooked meat",
-  "Frozen fries + burgers", "Canned chili + cheese", "Eggs & toast for dinner",
-  "Deli wraps + fruit", "Frozen GF pizza + salad", "Tuna melt + chips",
+  "Loaded nachos (ground beef, cheese, refried beans)",
+  "Burgers / burger bowls + fries",
+  "Tacos / quesadilla / burrito bowls",
+  "Chicken Caesar salad (bagged + rotisserie)",
+  "Chicken & kale salad (bagged + rotisserie)",
+  "Beans & bacon (one pot)",
+  "Hot dogs + chips + fruit",
+  "Eggs & toast for dinner",
+  "Deli wraps + fruit",
+  "Frozen GF pizza + salad",
 ];
 
 export const MEDIUM_IDEAS = [
-  "German potatoes (vinegar, onion, beans, hot dogs)", "Salmon + smashed potatoes",
-  "Soup + GF cornbread", "Potato & veggie hash", "Mackerel + roasted potatoes",
-  "Baked potato bar", "Chuck roast tacos",
+  "Salmon + roasted potatoes",
+  "Tater tot casserole (green beans, tater tots, cream of mushroom, ground beef)",
+  "Spaghetti (GF pasta)",
+  "Chicken alfredo (GF pasta)",
+  "Chili with cornbread",
+  "Egg casserole",
+  "German potatoes (vinegar, onion, beans, hot dogs)",
+  "Baked potato bar",
+  "Chuck roast tacos",
 ];
 
 export const CROCK_IDEAS = [
-  "Chuck roast + potatoes & carrots", "Crock pot pulled chicken bowls", "Chili (crock pot)",
-  "Crock pot pulled pork", "Crock pot chicken & potatoes",
+  "Chuck roast + potatoes & carrots",
+  "Crock pot pulled chicken bowls",
+  "Chili (crock pot)",
+  "Crock pot pulled pork",
+  "Crock pot chicken & potatoes",
 ];
 
 export const BAKING_IDEAS = [
@@ -83,11 +98,11 @@ export const BAKING_IDEAS = [
 export const DEFAULT_DINNERS = [
   { day: "Sunday",    tag: "crock", label: "Crock pot",   meal: "Chuck roast + potatoes & carrots (crock pot)", note: "Makes leftovers for Mon lunch + Tue dinner", sortOrder: 0 },
   { day: "Monday",    tag: "left",  label: "Leftovers",   meal: "Roast leftovers, fresh side salad", note: "", sortOrder: 1 },
-  { day: "Tuesday",   tag: "lazy",  label: "15-min",      meal: "Tuna or salmon cakes + roasted potatoes", note: "", sortOrder: 2 },
-  { day: "Wednesday", tag: "lazy",  label: "15-min",      meal: "Loaded baked potatoes + protein", note: "GF naturally", sortOrder: 3 },
-  { day: "Thursday",  tag: "flex",  label: "Bible study", meal: "One-pot soup or sheet-pan — feeds extras", note: "Decaf ready · bake a treat to share?", sortOrder: 4 },
-  { day: "Friday",    tag: "cook",  label: "Real cook",   meal: "Whatever sounds good — try one new thing", note: "Grilled cheese backup for girls", sortOrder: 5 },
-  { day: "Saturday",  tag: "flex",  label: "Flex / out",  meal: "Leftovers, potluck, or easy taco bowl", note: "Covers potluck weeks", sortOrder: 6 },
+  { day: "Tuesday",   tag: "lazy",  label: "Lazy",        meal: "Tacos / quesadilla / burrito bowls", note: "", sortOrder: 2 },
+  { day: "Wednesday", tag: "lazy",  label: "Lazy",        meal: "Burger bowls + fries", note: "", sortOrder: 3 },
+  { day: "Thursday",  tag: "flex",  label: "Bible study", meal: "Chili with cornbread — feeds extras", note: "Decaf ready · bake a treat to share?", sortOrder: 4 },
+  { day: "Friday",    tag: "cook",  label: "Real cook",   meal: "Salmon + roasted potatoes", note: "Grilled cheese backup for girls", sortOrder: 5 },
+  { day: "Saturday",  tag: "flex",  label: "Flex / out",  meal: "Loaded nachos or leftovers", note: "Covers potluck weeks", sortOrder: 6 },
 ];
 
 export const WEEKS = [
