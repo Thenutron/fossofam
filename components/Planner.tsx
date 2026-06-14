@@ -5,6 +5,7 @@ import type { Item, Dinner, Expense, Household } from "@/db/schema";
 import {
   STORE, STORE_ORDER, ROUTE_PLAN, STAPLES,
   LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS, BAKING_IDEAS, WEEKS, WEEKLY_TARGET,
+  routeStore,
 } from "@/lib/data";
 import {
   addItem, toggleItem, deleteItem, clearCheckedItems,
@@ -69,7 +70,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   function doAddItem(name: string, store: string) {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const s = store === "auto" ? routeStoreClient(trimmed) : store;
+    const s = store === "auto" ? routeStore(trimmed) : store;
     const temp: Item = { id: Date.now(), name: trimmed, store: s, done: false, createdAt: new Date() };
     setItems((p) => [...p, temp]);
     startTransition(() => addItem(trimmed, store));
@@ -184,24 +185,6 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   );
 }
 
-// client-side mirror of routeStore (so optimistic add picks the same store)
-function routeStoreClient(name: string): string {
-  const R: [RegExp, string][] = [
-    [/coffee.*mold|mold.*coffee|sprouts coffee/i, "sprouts"],
-    [/decaf|bible study coffee/i, "grocout"],
-    [/snack|cookie|pie crust|baking|flour|sugar|brown sugar|chocolate chip|brownie|muffin|vanilla|cinnamon|apple.*pie|crisp/i, "grocout"],
-    [/raw milk.*2 gallon|2 gallon.*raw|raw milk pickup/i, "rawmilk"],
-    [/raw milk|raw\.milk/i, "coop"],
-    [/myshan|grocery outlet milk|non\.?raw milk/i, "grocout"],
-    [/coconut milk|organic.*chicken|pasture|chuck roast|organic protein|grass.fed/i, "fred"],
-    [/feed|chicken feed|coastal/i, "coastal"],
-    [/paper towel|olipop|zevia|bulk|toilet|big bag|case of/i, "costco"],
-    [/flower|bouquet/i, "tj"],
-    [/glass|online|order/i, "online"],
-  ];
-  for (const [re, s] of R) if (re.test(name)) return s;
-  return "fred";
-}
 
 /* ===================== DASHBOARD ===================== */
 function Dashboard(props: any) {
