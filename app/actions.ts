@@ -105,3 +105,45 @@ export async function getAllState() {
   const [i, d, e, h] = await Promise.all([getItems(), getDinners(), getExpenses(), getHousehold()]);
   return { items: i, dinners: d, expenses: e, household: h };
 }
+
+// ---- AI-proposed plan changes (apply after user accepts the preview) ----
+type DinnerChange = {
+  day: string;
+  meal: string;
+  tag: string;
+  label: string;
+  note: string;
+  skip: boolean;
+  skipReason: string;
+};
+
+type ShoppingAddition = {
+  name: string;
+  store: string;
+};
+
+export async function applyPlanChanges(
+  dinnerChanges: DinnerChange[],
+  shoppingAdditions: ShoppingAddition[],
+) {
+  for (const c of dinnerChanges) {
+    await db
+      .update(dinners)
+      .set({
+        meal: c.meal,
+        tag: c.tag,
+        label: c.label,
+        note: c.note,
+        skip: c.skip,
+        skipReason: c.skipReason,
+      })
+      .where(eq(dinners.day, c.day));
+  }
+  for (const a of shoppingAdditions) {
+    const trimmed = a.name.trim();
+    if (!trimmed) continue;
+    const store = a.store && a.store.length > 0 ? a.store : routeStore(trimmed);
+    await db.insert(items).values({ name: trimmed, store });
+  }
+  revalidatePath("/");
+}

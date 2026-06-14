@@ -10,7 +10,7 @@ import {
   addItem, toggleItem, deleteItem, clearCheckedItems,
   updateDinnerMeal, setDinnerSkip,
   addExpense, deleteExpense, setCurrentWeek, closeOutWeek, clearLastWeek,
-  getAllState,
+  getAllState, applyPlanChanges,
 } from "@/app/actions";
 
 type Props = {
@@ -214,6 +214,31 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         <div className="dash-card-head" style={{ marginTop: 18 }}><i className="ti ti-calendar" /><h2 style={{ fontSize: 16 }}>Tomorrow · {tomorrowName}</h2></div>
         <DinnerSpotlight d={tomorrow} prominent={false} onSkip={skipPrompt} onUnskip={() => doSkip(tomorrow.id, false, "")} getRecipe={getRecipe} />
       </section>
+
+      {/* ============ AI MODIFY WEEK ============ */}
+      <AiModifyWeek
+        dinners={dinners}
+        items={items}
+        currentWeek={currentWeek}
+        onApply={(changes, additions) => {
+          // optimistic merge: apply dinner changes locally, append shopping additions
+          setDinners((p) => p.map((d) => {
+            const c = changes.find((x) => x.day === d.day);
+            return c ? { ...d, meal: c.meal, tag: c.tag, label: c.label, note: c.note, skip: c.skip, skipReason: c.skipReason } : d;
+          }));
+          setItems((p) => [
+            ...p,
+            ...additions.map((a, idx) => ({
+              id: Date.now() + idx,
+              name: a.name,
+              store: a.store,
+              done: false,
+              createdAt: new Date(),
+            })),
+          ]);
+          startTransition(() => applyPlanChanges(changes, additions));
+        }}
+      />
 
       {/* ============ THIS WEEK ============ */}
       <section className="card">
@@ -504,6 +529,144 @@ function BudgetSection({
       <div className="toolbar">
         <button className="btn-ghost" onClick={onCloseWeek}>Close out week &amp; start fresh</button>
       </div>
+    </section>
+  );
+}
+
+/* ---------- AI modify-week ---------- */
+type ProposalDinnerChange = {
+  day: string;
+  meal: string;
+  tag: string;
+  label: string;
+  note: string;
+  skip: boolean;
+  skipReason: string;
+};
+
+type ProposalAddition = {
+  name: string;
+  store: string;
+};
+
+type Proposal = {
+  summary: string;
+  dinner_changes: ProposalDinnerChange[];
+  shopping_additions: ProposalAddition[];
+};
+
+function AiModifyWeek({
+  dinners, items, currentWeek, onApply,
+}: {
+  dinners: Dinner[];
+  items: Item[];
+  currentWeek: number;
+  onApply: (changes: ProposalDinnerChange[], additions: ProposalAddition[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+
+  async function submit() {
+    setError(null);
+    setProposal(null);
+    if (!note.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/plan/modify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note, dinners, items, currentWeek }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+      setProposal(data.proposal);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function accept() {
+    if (!proposal) return;
+    onApply(proposal.dinner_changes, proposal.shopping_additions);
+    setProposal(null);
+    setNote("");
+    setOpen(false);
+  }
+
+  function reject() {
+    setProposal(null);
+  }
+
+  return (
+    <section className="card">
+      <div className="dash-card-head"><i className="ti ti-sparkles" /><h2>Modify week with AI</h2></div>
+      {!open ? (
+        <>
+          <div className="note">Cleanse week, hosting guests, special diet, busy stretch — describe what changes and the AI proposes a new week. You preview + accept before anything saves.</div>
+          <button className="btn-ghost" style={{ marginTop: 8 }} onClick={() => setOpen(true)}>Open the AI editor ↗</button>
+        </>
+      ) : (
+        <>
+          <div className="note">Describe what&apos;s different about this week. The AI will propose changes — nothing saves until you accept.</div>
+          <textarea
+            className="txt"
+            style={{ width: "100%", minHeight: 80, marginTop: 8, fontFamily: "inherit", fontSize: 14, padding: 8, borderRadius: 6 }}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="e.g. 'This week we're doing a 3-day cleanse Mon-Wed (smoothies + broths only), then back to normal Thu-Sat. Bible study Thursday still happens.'"
+            disabled={loading}
+          />
+          <div className="toolbar" style={{ marginTop: 8 }}>
+            <button className="btn-primary" onClick={submit} disabled={loading || !note.trim()}>
+              {loading ? "Thinking…" : "Get proposal"}
+            </button>
+            <button className="btn-ghost" onClick={() => { setOpen(false); setNote(""); setError(null); setProposal(null); }}>Cancel</button>
+          </div>
+          {error && <div className="hint" style={{ color: "var(--coral-ink, #c4452a)", marginTop: 8 }}>Error: {error}</div>}
+          {proposal && (
+            <div style={{ marginTop: 14, borderTop: "1px solid var(--line, #e5e0d6)", paddingTop: 12 }}>
+              <div style={{ fontWeight: 500, marginBottom: 6 }}>Proposal</div>
+              <div className="note" style={{ marginBottom: 12 }}>{proposal.summary}</div>
+              {proposal.dinner_changes.length > 0 && (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 500, margin: "8px 0 4px" }}>Dinner changes ({proposal.dinner_changes.length})</div>
+                  {proposal.dinner_changes.map((c) => (
+                    <div key={c.day} className="day-row" style={{ padding: "8px 0" }}>
+                      <div>
+                        <div className="day-name">{c.day}</div>
+                        <span className={"day-tag t-" + (c.skip ? "skip" : c.tag)}>{c.skip ? "Skipped" : c.label}</span>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 14 }}>{c.skip ? (c.skipReason || "No dinner needed") : (c.meal || "—")}</div>
+                        {c.note && !c.skip && <div className="gf-mini">{c.note}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+              {proposal.shopping_additions.length > 0 && (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 500, margin: "12px 0 4px" }}>Shopping additions ({proposal.shopping_additions.length})</div>
+                  <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+                    {proposal.shopping_additions.map((a, i) => (
+                      <div key={i}>+ {a.name} <span className="gf-mini" style={{ display: "inline" }}>→ {a.store}</span></div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <div className="toolbar" style={{ marginTop: 12 }}>
+                <button className="btn-primary" onClick={accept}>Apply changes</button>
+                <button className="btn-ghost" onClick={reject}>Reject</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </section>
   );
 }
