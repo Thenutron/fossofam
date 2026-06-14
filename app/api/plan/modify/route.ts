@@ -131,7 +131,10 @@ ${note.trim()}`;
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 4096,
-      thinking: { type: "adaptive" },
+      // Note: adaptive thinking is incompatible with tool_choice forcing a
+      // specific tool. We force the tool to guarantee structured output, so
+      // we trade off thinking — Sonnet 4.6 handles this structured-rewrite
+      // task well without it.
       system: [
         {
           type: "text",
