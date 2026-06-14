@@ -2,13 +2,19 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Fosso Meal Planner",
-  description: "Weekly meal planning & grocery routing for the Fosso family",
+  title: "FossoFam",
+  description: "Fosso family meal planning, grocery routing, and weekly budget.",
+  appleWebApp: {
+    capable: true,
+    title: "FossoFam",
+    statusBarStyle: "default",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  maximumScale: 5,
   themeColor: "#faf8f3",
 };
 

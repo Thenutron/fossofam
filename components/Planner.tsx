@@ -51,6 +51,27 @@ function weekOfLabel() {
   return monday.toLocaleDateString(undefined, { month: "long", day: "numeric" });
 }
 
+// Map "Sunday".."Saturday" to the actual Date in the current calendar week
+// (Sunday → Saturday). Used to render dates next to each day row and to
+// highlight today.
+function datesForCurrentWeek(now: Date = new Date()): Record<string, Date> {
+  const day = now.getDay(); // 0 = Sunday
+  const sunday = new Date(now);
+  sunday.setDate(now.getDate() - day);
+  sunday.setHours(0, 0, 0, 0);
+  const out: Record<string, Date> = {};
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(sunday);
+    d.setDate(sunday.getDate() + i);
+    out[DAY_NAMES[i]] = d;
+  }
+  return out;
+}
+
+function isSameYMD(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
 function tagToKind(tag: string) {
   if (tag === "crock") return "crock";
   if (tag === "lazy") return "lazy";
@@ -233,11 +254,13 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   const pct = Math.min(100, Math.round((weeklySpent / WEEKLY_TARGET) * 100));
   const over = remain < 0;
 
-  const todayIdx = new Date().getDay();
+  const todayDate = new Date();
+  const todayIdx = todayDate.getDay();
   const todayName = DAY_NAMES[todayIdx];
   const tomorrowName = DAY_NAMES[(todayIdx + 1) % 7];
   const today = dinners.find((d) => d.day === todayName) ?? dinners[0];
   const tomorrow = dinners.find((d) => d.day === tomorrowName) ?? dinners[0];
+  const weekDates = datesForCurrentWeek(todayDate);
 
   const itemsByStore = STORE_ORDER
     .map((sk) => ({
@@ -263,18 +286,8 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
       )}
       <header className="top">
         <div>
-          <h1>Fosso Meal Planner</h1>
-          <div className="sub">Gluten-free · potato-loving · organic · no-plastic · low-waste</div>
+          <h1>FossoFam</h1>
         </div>
-        <button
-          type="button"
-          className="cycle-pill"
-          onClick={doAdvanceWeek}
-          title="Tap to move to the next week"
-          style={{ cursor: "pointer", border: "none", font: "inherit" }}
-        >
-          Week {currentWeek} of 3 · {cycleLabel(currentWeek)}
-        </button>
       </header>
 
       {/* ============ TONIGHT + TOMORROW ============ */}
@@ -340,17 +353,29 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
 
       {/* ============ THIS WEEK ============ */}
       <section className="card">
-        <h2>This week</h2>
-        <div className="note">Edit any meal inline. Skip a day if you have leftovers, a potluck, or plans out. {weekOfLabel()} →</div>
+        <h2>Week of {weekOfLabel()}</h2>
+        <div className="note">Edit any meal inline. Tap ↺ to swap, ✕ to skip a day.</div>
         <div>
           {dinners.map((d) => {
             const skipOpen = rowMenu?.dinnerId === d.id && rowMenu.type === "skip";
             const swapOpen = rowMenu?.dinnerId === d.id && rowMenu.type === "swap";
+            const dateForDay = weekDates[d.day];
+            const isToday = dateForDay ? isSameYMD(dateForDay, todayDate) : false;
+            const dateLabel = dateForDay
+              ? dateForDay.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+              : "";
             return (
               <div key={d.id}>
-                <div className={"day-row" + (d.skip ? " skipped" : "")}>
+                <div
+                  className={"day-row" + (d.skip ? " skipped" : "")}
+                  style={isToday ? { background: "rgba(36, 110, 110, 0.06)", borderRadius: 8 } : undefined}
+                >
                   <div>
-                    <div className="day-name">{d.day}</div>
+                    <div className="day-name">
+                      {d.day}
+                      {dateLabel && <span style={{ fontWeight: 400, color: "var(--ink-3)", marginLeft: 6, fontSize: 13 }}>· {dateLabel}</span>}
+                      {isToday && <span className="day-tag t-cook" style={{ marginLeft: 8, fontSize: 10, verticalAlign: "middle" }}>today</span>}
+                    </div>
                     <span className={"day-tag t-" + (d.skip ? "skip" : d.tag)}>{d.skip ? "Skipped" : d.label}</span>
                   </div>
                   {d.skip ? (
@@ -531,7 +556,7 @@ function ShoppingSection({
                     <span className="store-swatch" style={{ background: g.store.color }} />
                     {g.store.name}
                   </span>
-                  <span className="store-meta">{remaining} to get · aim ~${g.target}</span>
+                  <span className="store-meta">{remaining} to get</span>
                 </div>
                 {g.items.map((it) => (
                   <div className={"item" + (it.done ? " done" : "")} key={it.id}>
@@ -819,7 +844,6 @@ function AiModifyWeek({
   onApply: (changes: ProposalDinnerChange[], additions: ProposalAddition[], proposalId?: number) => void;
   onReject: (proposalId?: number) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -855,7 +879,6 @@ function AiModifyWeek({
     setProposal(null);
     setProposalId(undefined);
     setNote("");
-    setOpen(false);
   }
 
   function reject() {
@@ -866,29 +889,23 @@ function AiModifyWeek({
 
   return (
     <section className="card">
-      <div className="dash-card-head"><i className="ti ti-sparkles" /><h2>Modify week with AI</h2></div>
-      {!open ? (
-        <>
-          <div className="note">Cleanse week, hosting guests, special diet, busy stretch — describe what changes and the AI proposes a new week. You preview + accept before anything saves.</div>
-          <button className="btn-ghost" style={{ marginTop: 8 }} onClick={() => setOpen(true)}>Open the AI editor ↗</button>
-        </>
-      ) : (
-        <>
-          <div className="note">Describe what&apos;s different about this week. The AI will propose changes — nothing saves until you accept.</div>
-          <textarea
-            className="txt"
-            style={{ width: "100%", minHeight: 80, marginTop: 8, fontFamily: "inherit", fontSize: 14, padding: 8, borderRadius: 6 }}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="e.g. 'This week we're doing a 3-day cleanse Mon-Wed (smoothies + broths only), then back to normal Thu-Sat. Bible study Thursday still happens.'"
-            disabled={loading}
-          />
-          <div className="toolbar" style={{ marginTop: 8 }}>
-            <button className="btn-primary" onClick={submit} disabled={loading || !note.trim()}>
-              {loading ? "Thinking…" : "Get proposal"}
-            </button>
-            <button className="btn-ghost" onClick={() => { setOpen(false); setNote(""); setError(null); setProposal(null); }}>Cancel</button>
-          </div>
+      <div className="dash-card-head"><i className="ti ti-sparkles" /><h2>Tell the AI about this week</h2></div>
+      <textarea
+        className="txt"
+        style={{ width: "100%", minHeight: 80, marginTop: 4, fontFamily: "inherit", fontSize: 14, padding: 8, borderRadius: 6 }}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="What's different? e.g. '3-day cleanse Mon–Wed, normal Thu–Sat' or 'busy week, all lazy meals'"
+        disabled={loading}
+      />
+      <div className="toolbar" style={{ marginTop: 8 }}>
+        <button className="btn-primary" onClick={submit} disabled={loading || !note.trim()}>
+          {loading ? "Thinking…" : "Get proposal"}
+        </button>
+        {(note || proposal || error) && (
+          <button className="btn-ghost" onClick={() => { setNote(""); setError(null); setProposal(null); setProposalId(undefined); }}>Clear</button>
+        )}
+      </div>
           {error && <div className="hint" style={{ color: "var(--coral-ink, #c4452a)", marginTop: 8 }}>Error: {error}</div>}
           {proposal && (
             <div style={{ marginTop: 14, borderTop: "1px solid var(--line, #e5e0d6)", paddingTop: 12 }}>
@@ -947,8 +964,6 @@ function AiModifyWeek({
               </div>
             </div>
           )}
-        </>
-      )}
     </section>
   );
 }
