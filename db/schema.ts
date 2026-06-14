@@ -44,14 +44,18 @@ export const expenses = pgTable("expenses", {
 
 // Household members. Lets future modules attribute per-person (e.g. "Knute's
 // lunches", "girls' dentist appointment") without re-encoding the family in
-// every prompt. Seeded by db/seed.ts.
+// every prompt. Seeded by db/seed.ts. The preferences blob is a JSON object:
+// { likes: string[]; dislikes: string[]; allergies: string[]; notes: string }.
+// Kept loose-typed in JSON so it's cheap to extend without migrations.
 export const people = pgTable("people", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(), // stable slug: knute | kait | girl1 | girl2
   name: text("name").notNull(),
   role: text("role").notNull(), // adult | child
+  birthYear: integer("birth_year"), // nullable; agent computes age from it
   dietary: text("dietary").notNull().default(""), // comma-separated flags
-  notes: text("notes").default(""),
+  preferences: jsonb("preferences"), // { likes, dislikes, allergies, notes }
+  notes: text("notes").default(""), // free-text behavioral notes
   sortOrder: integer("sort_order").notNull().default(0),
 });
 

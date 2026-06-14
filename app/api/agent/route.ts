@@ -15,8 +15,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { agentProposals } from "@/db/schema";
-import { FAMILY_NARRATIVE } from "@/lib/familyProfile";
-import { STORE_ORDER, ROUTE_PLAN, STAPLES, LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS } from "@/lib/data";
+import { FAMILY_NARRATIVE, TONE } from "@/lib/familyProfile";
+import { STORE, STORE_ORDER, ROUTE_PLAN, STAPLES, LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS } from "@/lib/data";
 import { llm, LlmError } from "@/lib/llm";
 import { getTool, type AgentToolName, type ModifyWeekProposal, type RecipeProposal } from "@/lib/agentTools";
 import type { Dinner, Item } from "@/db/schema";
@@ -29,10 +29,13 @@ export const maxDuration = 60;
 // (No timestamps or per-request data — keeps the prompt-cache prefix stable.)
 const STATIC_CONTEXT = `${FAMILY_NARRATIVE}
 
-# Stores + routing (item → store key)
+${TONE}
+
+# Stores — name, target spend, family's real take, agent tip
 ${STORE_ORDER.map((k) => {
   const r = ROUTE_PLAN.find((rp) => rp.key === k);
-  return `- ${k}: target $${r?.target ?? "?"} — ${r?.tip ?? ""}`;
+  const s = STORE[k];
+  return `- ${k} (${s?.name}, target $${r?.target ?? "?"}): ${s?.note ?? ""} | ${r?.tip ?? ""}`;
 }).join("\n")}
 
 # Dinner tag schema
@@ -57,7 +60,10 @@ ${STORE_ORDER.map((k) => {
 - Read the family's note literally. Respect cleanse weeks, special diets, guest hosting, etc.
 - Edit only what the note requires — don't gratuitously change days that aren't affected.
 - Keep meal text concise — the family glances on their phone.
-- Tone is encouraging, never guilt. Honor the values list above.
+- Honor the tone block above.
+- Thursday Bible study: they HOST but do NOT cook for guests. Decaf + snacks; a baked treat is occasional/optional. Do NOT plan Thursday meals around feeding extras.
+- BUDGET RULE: every modify_week proposal must include estimated_weekly_cost + budget_status. If the proposal would push over $215, you must propose a 'scrounge night' day (pantry + leftovers, no shopping). Frame the scrounge in the tone block's voice — "scrounge night era", "pantry raid", not preachy.
+- Per-person preferences are LOAD-BEARING. Kait + Revs don't do shellfish/exotic seafood. Knute + Havyn do. Recipes and plans must respect this.
 - Return your proposal by calling the tool you've been instructed to use. Do not respond conversationally.`;
 
 type AgentRequest = {
@@ -70,9 +76,54 @@ type AgentRequest = {
   // For get_recipe specifically
   meal?: string;
   kind?: string; // "crock" | "lazy" | "cook" | "left" | "flex" | "bake" | "dinner"
+  // For import_recipe specifically
+  url?: string;
 };
 
-function buildToolContext(req: AgentRequest): string {
+// Strip HTML to readable text for the LLM. Good-enough heuristic for the
+// blog-post-style recipe pages we'll see. Caps at 20K chars to keep token
+// cost reasonable (recipe sites are mostly cruft around the actual recipe).
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 20000);
+}
+
+async function fetchRecipeText(url: string): Promise<string> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Invalid URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("URL must be http(s)");
+  }
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; FossoMealPlanner/1.0; +https://fossofam.vercel.app)",
+      Accept: "text/html,application/xhtml+xml",
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Recipe page returned ${res.status}`);
+  const html = await res.text();
+  return htmlToText(html);
+}
+
+function buildToolContext(req: AgentRequest, extras?: { recipeText?: string }): string {
   if (req.tool === "modify_week") {
     const dinners = req.dinners ?? [];
     const items = req.items ?? [];
@@ -99,6 +150,16 @@ ${req.note?.trim() || "(none — use defaults)"}
 
 Return a complete, family-scaled recipe via the get_recipe tool.`;
   }
+  if (req.tool === "import_recipe") {
+    return `# Recipe page text (extracted from ${req.url ?? "(no url)"})
+
+${extras?.recipeText ?? "(no text — fetch failed)"}
+
+# Notes from the family
+${req.note?.trim() || "(none)"}
+
+Extract the actual recipe from the page text above. Ignore the blog narrative, ads, comments, related-recipe links. Suggest a day to slot it into based on its effort, propose shopping_additions only for ingredients the family probably doesn't already have, and flag any family_fit_warnings (especially shellfish for Kait/Revs).`;
+  }
   return req.note.trim();
 }
 
@@ -121,7 +182,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown tool" }, { status: 400 });
   }
 
-  const userContent = buildToolContext(body);
+  // For import_recipe, fetch the URL server-side and inline the page text.
+  let recipeText: string | undefined;
+  if (body.tool === "import_recipe") {
+    if (!body.url || typeof body.url !== "string") {
+      return NextResponse.json({ error: "import_recipe requires `url`" }, { status: 400 });
+    }
+    try {
+      recipeText = await fetchRecipeText(body.url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to fetch URL";
+      return NextResponse.json({ error: `Couldn't fetch the recipe page: ${msg}` }, { status: 502 });
+    }
+  }
+
+  const userContent = buildToolContext(body, { recipeText });
 
   try {
     const response = await llm({

@@ -49,6 +49,16 @@ export async function updateDinnerMeal(id: number, meal: string) {
   revalidatePath("/");
 }
 
+// Update multiple fields of a single dinner slot at once. Used by the swap
+// flow (which changes meal + tag + label) and any future per-slot editors.
+export async function updateDinnerSlot(
+  id: number,
+  fields: { meal?: string; tag?: string; label?: string; note?: string },
+) {
+  await db.update(dinners).set(fields).where(eq(dinners.id, id));
+  revalidatePath("/");
+}
+
 export async function setDinnerSkip(id: number, skip: boolean, skipReason: string) {
   await db.update(dinners).set({ skip, skipReason }).where(eq(dinners.id, id));
   revalidatePath("/");
@@ -160,4 +170,40 @@ export async function rejectProposal(proposalId: number) {
     .update(agentProposals)
     .set({ status: "rejected" })
     .where(eq(agentProposals.id, proposalId));
+}
+
+// Apply an imported recipe: write the meal/tag/label/note onto the chosen
+// day's dinner slot and insert the shopping additions. The recipe steps go
+// into the dinner's `note` field for now — when we add a `recipes` table
+// later, this is the call site to change.
+export async function applyImportedRecipe(
+  day: string,
+  payload: {
+    title: string;
+    tag: string;
+    label: string;
+    steps: string[];
+    ingredients: { item: string; amount: string; note: string }[];
+  },
+  shoppingAdditions: { name: string; store: string }[],
+  proposalId?: number,
+) {
+  const note = `Steps: ${payload.steps.join(" | ")}`.slice(0, 1500);
+  await db
+    .update(dinners)
+    .set({ meal: payload.title, tag: payload.tag, label: payload.label, note })
+    .where(eq(dinners.day, day));
+  for (const a of shoppingAdditions) {
+    const trimmed = a.name.trim();
+    if (!trimmed) continue;
+    const store = a.store && a.store.length > 0 ? a.store : routeStore(trimmed);
+    await db.insert(items).values({ name: trimmed, store });
+  }
+  if (proposalId !== undefined) {
+    await db
+      .update(agentProposals)
+      .set({ status: "applied", appliedAt: new Date() })
+      .where(eq(agentProposals.id, proposalId));
+  }
+  revalidatePath("/");
 }

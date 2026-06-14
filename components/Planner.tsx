@@ -4,13 +4,14 @@ import { useState, useTransition, useEffect, useRef } from "react";
 import type { Item, Dinner, Expense, Household } from "@/db/schema";
 import {
   STORE, STORE_ORDER, ROUTE_PLAN, STAPLES, WEEKLY_TARGET,
+  LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS,
   routeStore,
 } from "@/lib/data";
 import {
   addItem, toggleItem, deleteItem, clearCheckedItems,
-  updateDinnerMeal, setDinnerSkip,
+  updateDinnerMeal, updateDinnerSlot, setDinnerSkip,
   addExpense, deleteExpense, setCurrentWeek, closeOutWeek, clearLastWeek,
-  getAllState, applyPlanChanges, rejectProposal,
+  getAllState, applyPlanChanges, rejectProposal, applyImportedRecipe,
 } from "@/app/actions";
 
 type Props = {
@@ -21,6 +22,26 @@ type Props = {
 };
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// One-tap skip reasons. Tapping a chip skips the day with that reason — no
+// prompt(). "Other…" falls back to a freeform input for less common cases.
+const SKIP_REASONS = [
+  "Ate out",
+  "Family's house",
+  "Leftovers",
+  "Date night",
+  "Don't feel like it",
+  "Potluck",
+];
+
+// Swap-picker tiers. Tapping a chip replaces the day's meal with that text
+// and sets the tag/label automatically. Pulled from lib/data.ts idea banks
+// so adding a new idea there immediately shows up here.
+const SWAP_OPTIONS: { tag: string; label: string; tier: string; ideas: readonly string[] }[] = [
+  { tag: "lazy",  label: "Lazy",      tier: "Lazy (<5min)",   ideas: LAZY_IDEAS },
+  { tag: "cook",  label: "Real cook", tier: "Real cook",       ideas: MEDIUM_IDEAS },
+  { tag: "crock", label: "Crock pot", tier: "Crock pot",       ideas: CROCK_IDEAS },
+];
 
 function weekOfLabel() {
   const now = new Date();
@@ -182,10 +203,25 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
     setRecipeSheet({ open: false, meal: "", kind: "dinner", loading: false, error: null, recipe: null });
   }
 
-  function skipPrompt(d: Dinner) {
-    const r = prompt(`Skip ${d.day} — reason? (leftovers, invited out, date night, etc.)`, "Leftovers");
+  // Per-row menu state. One menu open at a time across the whole week list.
+  // `type === "skip"` shows the reason chips; `type === "swap"` shows the idea picker.
+  const [rowMenu, setRowMenu] = useState<{ dinnerId: number; type: "skip" | "swap" } | null>(null);
+  function toggleRowMenu(dinnerId: number, type: "skip" | "swap") {
+    setRowMenu((m) => (m && m.dinnerId === dinnerId && m.type === type ? null : { dinnerId, type }));
+  }
+  function applySkipReason(d: Dinner, reason: string) {
+    doSkip(d.id, true, reason);
+    setRowMenu(null);
+  }
+  function applySwap(d: Dinner, idea: string, tag: string, label: string) {
+    setDinners((p) => p.map((x) => (x.id === d.id ? { ...x, meal: idea, tag, label } : x)));
+    startTransition(() => updateDinnerSlot(d.id, { meal: idea, tag, label }));
+    setRowMenu(null);
+  }
+  function skipOther(d: Dinner) {
+    const r = prompt(`Skip ${d.day} — reason?`, "Leftovers");
     if (r === null) return;
-    doSkip(d.id, true, r.trim() || "No dinner needed");
+    applySkipReason(d, r.trim() || "No dinner needed");
   }
 
   // ---- derived ----
@@ -244,9 +280,9 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
       {/* ============ TONIGHT + TOMORROW ============ */}
       <section className="card">
         <div className="dash-card-head"><i className="ti ti-flame" /><h2>Tonight · {todayName}</h2></div>
-        <DinnerSpotlight d={today} prominent onSkip={skipPrompt} onUnskip={() => doSkip(today.id, false, "")} getRecipe={getRecipe} />
+        <DinnerSpotlight d={today} prominent onSkip={(d) => toggleRowMenu(d.id, "skip")} onUnskip={() => doSkip(today.id, false, "")} getRecipe={getRecipe} />
         <div className="dash-card-head" style={{ marginTop: 18 }}><i className="ti ti-calendar" /><h2 style={{ fontSize: 16 }}>Tomorrow · {tomorrowName}</h2></div>
-        <DinnerSpotlight d={tomorrow} prominent={false} onSkip={skipPrompt} onUnskip={() => doSkip(tomorrow.id, false, "")} getRecipe={getRecipe} />
+        <DinnerSpotlight d={tomorrow} prominent={false} onSkip={(d) => toggleRowMenu(d.id, "skip")} onUnskip={() => doSkip(tomorrow.id, false, "")} getRecipe={getRecipe} />
       </section>
 
       {/* ============ AI MODIFY WEEK ============ */}
@@ -277,41 +313,105 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         }}
       />
 
+      {/* ============ IMPORT RECIPE FROM URL ============ */}
+      <RecipeImport
+        onApply={(day, payload, additions, proposalId) => {
+          setDinners((p) => p.map((d) =>
+            d.day === day
+              ? { ...d, meal: payload.title, tag: payload.tag, label: payload.label, note: `Steps: ${payload.steps.join(" | ")}`.slice(0, 1500) }
+              : d,
+          ));
+          setItems((p) => [
+            ...p,
+            ...additions.map((a, idx) => ({
+              id: Date.now() + idx,
+              name: a.name,
+              store: a.store,
+              done: false,
+              createdAt: new Date(),
+            })),
+          ]);
+          startTransition(() => applyImportedRecipe(day, payload, additions, proposalId));
+        }}
+        onReject={(proposalId) => {
+          if (proposalId !== undefined) startTransition(() => rejectProposal(proposalId));
+        }}
+      />
+
       {/* ============ THIS WEEK ============ */}
       <section className="card">
         <h2>This week</h2>
         <div className="note">Edit any meal inline. Skip a day if you have leftovers, a potluck, or plans out. {weekOfLabel()} →</div>
         <div>
-          {dinners.map((d) => (
-            <div className={"day-row" + (d.skip ? " skipped" : "")} key={d.id}>
-              <div>
-                <div className="day-name">{d.day}</div>
-                <span className={"day-tag t-" + (d.skip ? "skip" : d.tag)}>{d.skip ? "Skipped" : d.label}</span>
-              </div>
-              {d.skip ? (
-                <div><div className="skip-reason">{d.skipReason || "No dinner needed"}</div></div>
-              ) : (
-                <div>
-                  <input
-                    className="meal-input"
-                    defaultValue={d.meal}
-                    onBlur={(e) => { if (e.target.value !== d.meal) doUpdateMeal(d.id, e.target.value); }}
-                  />
-                  {d.note && <div className="gf-mini">{d.note}</div>}
+          {dinners.map((d) => {
+            const skipOpen = rowMenu?.dinnerId === d.id && rowMenu.type === "skip";
+            const swapOpen = rowMenu?.dinnerId === d.id && rowMenu.type === "swap";
+            return (
+              <div key={d.id}>
+                <div className={"day-row" + (d.skip ? " skipped" : "")}>
+                  <div>
+                    <div className="day-name">{d.day}</div>
+                    <span className={"day-tag t-" + (d.skip ? "skip" : d.tag)}>{d.skip ? "Skipped" : d.label}</span>
+                  </div>
+                  {d.skip ? (
+                    <div><div className="skip-reason">{d.skipReason || "No dinner needed"}</div></div>
+                  ) : (
+                    <div>
+                      <input
+                        className="meal-input"
+                        defaultValue={d.meal}
+                        onBlur={(e) => { if (e.target.value !== d.meal) doUpdateMeal(d.id, e.target.value); }}
+                      />
+                      {d.note && <div className="gf-mini">{d.note}</div>}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {d.skip ? (
+                      <button className="swap-btn" onClick={() => doSkip(d.id, false, "")}>↩ un-skip</button>
+                    ) : (
+                      <>
+                        <button className="swap-btn recipe-btn" onClick={() => getRecipe(d.meal, tagToKind(d.tag))}>📖 recipe</button>
+                        <button className={"swap-btn" + (swapOpen ? " recipe-btn" : "")} onClick={() => toggleRowMenu(d.id, "swap")}>↺ swap</button>
+                        <button className={"swap-btn skip-btn"} onClick={() => toggleRowMenu(d.id, "skip")}>✕ skip</button>
+                      </>
+                    )}
+                  </div>
                 </div>
-              )}
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {d.skip ? (
-                  <button className="swap-btn" onClick={() => doSkip(d.id, false, "")}>↩ un-skip</button>
-                ) : (
-                  <>
-                    <button className="swap-btn recipe-btn" onClick={() => getRecipe(d.meal, tagToKind(d.tag))}>📖 recipe ↗</button>
-                    <button className="swap-btn skip-btn" onClick={() => skipPrompt(d)}>✕ skip</button>
-                  </>
+                {skipOpen && (
+                  <div style={{ padding: "8px 12px 14px", borderBottom: "1px solid var(--line, #e5e0d6)" }}>
+                    <div className="gf-mini" style={{ marginBottom: 6 }}>Why skip {d.day}?</div>
+                    <div className="ideas">
+                      {SKIP_REASONS.map((r) => (
+                        <button key={r} className="idea-chip" onClick={() => applySkipReason(d, r)}>{r}</button>
+                      ))}
+                      <button className="idea-chip" onClick={() => skipOther(d)}>Other…</button>
+                    </div>
+                  </div>
+                )}
+                {swapOpen && (
+                  <div style={{ padding: "8px 12px 14px", borderBottom: "1px solid var(--line, #e5e0d6)" }}>
+                    <div className="gf-mini" style={{ marginBottom: 6 }}>Swap {d.day} for…</div>
+                    {SWAP_OPTIONS.map((group) => (
+                      <div key={group.tier} style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 500, color: "var(--ink-3)", margin: "4px 0" }}>{group.tier}</div>
+                        <div className="ideas">
+                          {group.ideas.map((idea) => (
+                            <button
+                              key={idea}
+                              className="idea-chip"
+                              onClick={() => applySwap(d, idea, group.tag, group.label)}
+                            >
+                              {idea}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -660,7 +760,9 @@ function RecipeSheet({
             </h3>
             <ol style={{ paddingLeft: 22, margin: 0, fontSize: 14, lineHeight: 1.8 }}>
               {recipe.steps.map((s, i) => (
-                <li key={i} style={{ marginBottom: 4 }}>{s}</li>
+                // Strip any leading "1." / "1)" / "Step 1." prefix the model may
+                // emit, since the <ol> already numbers each step.
+                <li key={i} style={{ marginBottom: 4 }}>{s.replace(/^\s*(?:step\s*)?\d+[.)]\s*/i, "")}</li>
               ))}
             </ol>
 
@@ -701,6 +803,9 @@ type ProposalAddition = {
 
 type Proposal = {
   summary: string;
+  estimated_weekly_cost?: number;
+  budget_status?: "under" | "at" | "over";
+  scrounge_suggestion?: string;
   dinner_changes: ProposalDinnerChange[];
   shopping_additions: ProposalAddition[];
 };
@@ -788,7 +893,27 @@ function AiModifyWeek({
           {proposal && (
             <div style={{ marginTop: 14, borderTop: "1px solid var(--line, #e5e0d6)", paddingTop: 12 }}>
               <div style={{ fontWeight: 500, marginBottom: 6 }}>Proposal</div>
-              <div className="note" style={{ marginBottom: 12 }}>{proposal.summary}</div>
+              <div className="note" style={{ marginBottom: 8 }}>{proposal.summary}</div>
+              {(proposal.estimated_weekly_cost !== undefined || proposal.budget_status) && (
+                <div
+                  className={"dash-budget-chip" + (proposal.budget_status === "over" ? " over" : "")}
+                  style={{ display: "inline-flex", marginBottom: 10, gap: 8 }}
+                >
+                  <span className="dbc-label">Est. week:</span>
+                  <span className="dbc-val">
+                    ${proposal.estimated_weekly_cost ?? "?"}
+                    {proposal.budget_status === "over" && " — over"}
+                    {proposal.budget_status === "under" && " — under"}
+                    {proposal.budget_status === "at" && " — on target"}
+                  </span>
+                </div>
+              )}
+              {proposal.scrounge_suggestion && (
+                <div className="last-week-banner over" style={{ marginBottom: 12 }}>
+                  <i className="ti ti-alert-triangle" />
+                  <div><strong>Scrounge night:</strong> {proposal.scrounge_suggestion}</div>
+                </div>
+              )}
               {proposal.dinner_changes.length > 0 && (
                 <>
                   <div style={{ fontSize: 13, fontWeight: 500, margin: "8px 0 4px" }}>Dinner changes ({proposal.dinner_changes.length})</div>
@@ -818,6 +943,197 @@ function AiModifyWeek({
               )}
               <div className="toolbar" style={{ marginTop: 12 }}>
                 <button className="btn-primary" onClick={accept}>Apply changes</button>
+                <button className="btn-ghost" onClick={reject}>Reject</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+/* ---------- Recipe import from URL ---------- */
+type ImportedRecipe = {
+  title: string;
+  source_summary: string;
+  servings: string;
+  prep_time: string;
+  cook_time: string;
+  ingredients: { item: string; amount: string; note: string }[];
+  steps: string[];
+  suggested_day: string;
+  suggested_tag: string;
+  suggested_label: string;
+  shopping_additions: { name: string; store: string }[];
+  family_fit_warnings: string;
+};
+
+function RecipeImport({
+  onApply, onReject,
+}: {
+  onApply: (
+    day: string,
+    payload: { title: string; tag: string; label: string; steps: string[]; ingredients: { item: string; amount: string; note: string }[] },
+    additions: { name: string; store: string }[],
+    proposalId?: number,
+  ) => void;
+  onReject: (proposalId?: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [recipe, setRecipe] = useState<ImportedRecipe | null>(null);
+  const [proposalId, setProposalId] = useState<number | undefined>(undefined);
+  const [selectedDay, setSelectedDay] = useState<string>("");
+
+  async function submit() {
+    setError(null);
+    setRecipe(null);
+    setProposalId(undefined);
+    if (!url.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool: "import_recipe", url: url.trim(), note: "" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+      setRecipe(data.proposal);
+      setProposalId(data.proposalId);
+      setSelectedDay(data.proposal?.suggested_day || "");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function accept() {
+    if (!recipe || !selectedDay) return;
+    onApply(
+      selectedDay,
+      {
+        title: recipe.title,
+        tag: recipe.suggested_tag,
+        label: recipe.suggested_label,
+        steps: recipe.steps,
+        ingredients: recipe.ingredients,
+      },
+      recipe.shopping_additions,
+      proposalId,
+    );
+    setRecipe(null);
+    setUrl("");
+    setOpen(false);
+  }
+
+  function reject() {
+    onReject(proposalId);
+    setRecipe(null);
+    setProposalId(undefined);
+  }
+
+  return (
+    <section className="card">
+      <div className="dash-card-head"><i className="ti ti-link" /><h2>Import a recipe from a URL</h2></div>
+      {!open ? (
+        <>
+          <div className="note">Paste a recipe link → we parse it, suggest a day to slot it into, and queue the missing ingredients on your shopping list. Approve before anything saves.</div>
+          <button className="btn-ghost" style={{ marginTop: 8 }} onClick={() => setOpen(true)}>Paste a link ↗</button>
+        </>
+      ) : (
+        <>
+          <div className="add-row">
+            <input
+              className="txt"
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+              placeholder="https://… (paste recipe URL)"
+              disabled={loading}
+            />
+            <button className="btn-primary" onClick={submit} disabled={loading || !url.trim()}>
+              {loading ? "Reading…" : "Parse"}
+            </button>
+            <button className="btn-ghost" onClick={() => { setOpen(false); setUrl(""); setRecipe(null); setError(null); }}>Cancel</button>
+          </div>
+          {error && <div className="hint" style={{ color: "var(--coral-ink, #c4452a)", marginTop: 8 }}>Error: {error}</div>}
+          {recipe && (
+            <div style={{ marginTop: 14, borderTop: "1px solid var(--line, #e5e0d6)", paddingTop: 12 }}>
+              <div style={{ fontWeight: 500, marginBottom: 4, fontSize: 17 }}>{recipe.title}</div>
+              <div className="note" style={{ marginBottom: 10 }}>{recipe.source_summary}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", fontSize: 13, color: "var(--ink-2)", marginBottom: 10 }}>
+                <span>🍽 {recipe.servings}</span>
+                <span>⏱ {recipe.prep_time} prep</span>
+                <span>🔥 {recipe.cook_time}</span>
+                <span className={"day-tag t-" + recipe.suggested_tag} style={{ marginLeft: 0 }}>{recipe.suggested_label}</span>
+              </div>
+
+              {recipe.family_fit_warnings && (
+                <div className="last-week-banner over" style={{ marginBottom: 10 }}>
+                  <i className="ti ti-alert-triangle" />
+                  <div><strong>Heads up:</strong> {recipe.family_fit_warnings}</div>
+                </div>
+              )}
+
+              <div style={{ marginBottom: 10 }}>
+                <div className="gf-mini" style={{ marginBottom: 4 }}>Slot into which day?</div>
+                <div className="ideas">
+                  {DAY_NAMES.map((day) => (
+                    <button
+                      key={day}
+                      className={"idea-chip" + (selectedDay === day ? " recipe-chip" : "")}
+                      onClick={() => setSelectedDay(day)}
+                    >
+                      {day}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ fontSize: 13, fontWeight: 500, margin: "10px 0 4px", textTransform: "uppercase", letterSpacing: 0.3, color: "var(--ink-2)" }}>
+                Ingredients ({recipe.ingredients.length})
+              </div>
+              <ul style={{ paddingLeft: 18, margin: 0, fontSize: 13, lineHeight: 1.7 }}>
+                {recipe.ingredients.map((ing, i) => (
+                  <li key={i}>
+                    <strong>{ing.amount}</strong> {ing.item}
+                    {ing.note && <span className="gf-mini" style={{ display: "inline", marginLeft: 6 }}>({ing.note})</span>}
+                  </li>
+                ))}
+              </ul>
+
+              {recipe.shopping_additions.length > 0 && (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 500, margin: "12px 0 4px", textTransform: "uppercase", letterSpacing: 0.3, color: "var(--ink-2)" }}>
+                    Will add to shopping ({recipe.shopping_additions.length})
+                  </div>
+                  <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+                    {recipe.shopping_additions.map((a, i) => (
+                      <div key={i}>+ {a.name} <span className="gf-mini" style={{ display: "inline" }}>→ {a.store}</span></div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <div style={{ fontSize: 13, fontWeight: 500, margin: "12px 0 4px", textTransform: "uppercase", letterSpacing: 0.3, color: "var(--ink-2)" }}>
+                Steps ({recipe.steps.length})
+              </div>
+              <ol style={{ paddingLeft: 22, margin: 0, fontSize: 13, lineHeight: 1.7 }}>
+                {recipe.steps.map((s, i) => (
+                  <li key={i} style={{ marginBottom: 3 }}>{s.replace(/^\s*(?:step\s*)?\d+[.)]\s*/i, "")}</li>
+                ))}
+              </ol>
+
+              <div className="toolbar" style={{ marginTop: 14 }}>
+                <button className="btn-primary" onClick={accept} disabled={!selectedDay}>
+                  {selectedDay ? `Apply to ${selectedDay}` : "Pick a day first"}
+                </button>
                 <button className="btn-ghost" onClick={reject}>Reject</button>
               </div>
             </div>
