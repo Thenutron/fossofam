@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { items, dinners, expenses, household } from "@/db/schema";
+import { items, dinners, expenses, household, agentProposals } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { routeStore, DEFAULT_DINNERS } from "@/lib/data";
 import { revalidatePath } from "next/cache";
@@ -125,6 +125,7 @@ type ShoppingAddition = {
 export async function applyPlanChanges(
   dinnerChanges: DinnerChange[],
   shoppingAdditions: ShoppingAddition[],
+  proposalId?: number,
 ) {
   for (const c of dinnerChanges) {
     await db
@@ -145,5 +146,18 @@ export async function applyPlanChanges(
     const store = a.store && a.store.length > 0 ? a.store : routeStore(trimmed);
     await db.insert(items).values({ name: trimmed, store });
   }
+  if (proposalId !== undefined) {
+    await db
+      .update(agentProposals)
+      .set({ status: "applied", appliedAt: new Date() })
+      .where(eq(agentProposals.id, proposalId));
+  }
   revalidatePath("/");
+}
+
+export async function rejectProposal(proposalId: number) {
+  await db
+    .update(agentProposals)
+    .set({ status: "rejected" })
+    .where(eq(agentProposals.id, proposalId));
 }

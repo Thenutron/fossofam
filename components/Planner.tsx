@@ -10,7 +10,7 @@ import {
   addItem, toggleItem, deleteItem, clearCheckedItems,
   updateDinnerMeal, setDinnerSkip,
   addExpense, deleteExpense, setCurrentWeek, closeOutWeek, clearLastWeek,
-  getAllState, applyPlanChanges,
+  getAllState, applyPlanChanges, rejectProposal,
 } from "@/app/actions";
 
 type Props = {
@@ -42,17 +42,17 @@ function cycleLabel(week: number) {
   return "normal week";
 }
 
-const FAM = "Family context: gluten-free household (sometimes dairy-free too); 2 adults + 2 young girls who eat small portions (the girls aren't GF/DF but want healthy). We love potatoes. Organic where it matters.";
-
-function recipePrompt(meal: string, kind: string) {
-  if (kind === "bake")
-    return `Give me a recipe for ${meal}. ${FAM} It's for Bible study night and/or our own treats, so a batch size that shares well is great. Note where to buy specialty items cheap (we use Grocery Outlet for baking + snacks). Make it gluten-free if reasonable, or note a GF swap.`;
-  if (kind === "lazy")
-    return `Give me a genuinely lazy recipe for ${meal} — under 5 minutes of prep and minimal dishes. ${FAM} List ingredients, then quick steps. Flag any easy dairy-free swap for the adults.`;
-  if (kind === "crock")
-    return `Give me a crock pot recipe for ${meal} sized to leave leftovers for next-day lunches. ${FAM} List ingredients and simple steps, and tell me when to start it.`;
-  return `Give me a simple recipe for ${meal}. ${FAM} Keep it weeknight-easy with minimal cleanup. List ingredients then steps, and flag a dairy-free swap for the adults where it matters.`;
-}
+// Recipe shape returned by the /api/agent get_recipe tool.
+type Recipe = {
+  title: string;
+  servings: string;
+  prep_time: string;
+  cook_time: string;
+  ingredients: { item: string; amount: string; note: string }[];
+  steps: string[];
+  tips: string[];
+  when_to_start: string;
+};
 
 export default function Planner({ initialItems, initialDinners, initialExpenses, initialHousehold }: Props) {
   const [items, setItems] = useState(initialItems);
@@ -123,7 +123,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   }
   function doAddExpense(name: string, amount: number, kind: string) {
     if (!amount || amount <= 0) return;
-    const temp: Expense = { id: Date.now(), name: name || "Expense", amount, kind, createdAt: new Date() };
+    const temp: Expense = { id: Date.now(), name: name || "Expense", amount, kind, category: "groceries", createdAt: new Date() };
     setExpenses((p) => [...p, temp]);
     startTransition(() => addExpense(name, amount, kind));
   }
@@ -150,11 +150,36 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
     startTransition(() => clearLastWeek());
   }
 
-  function getRecipe(meal: string, kind: string) {
+  // Recipe sheet state. Tapping 📖 recipe opens this; the request fires
+  // against /api/agent (get_recipe tool). Rendered as a modal overlay.
+  const [recipeSheet, setRecipeSheet] = useState<{
+    open: boolean;
+    meal: string;
+    kind: string;
+    loading: boolean;
+    error: string | null;
+    recipe: Recipe | null;
+  }>({ open: false, meal: "", kind: "dinner", loading: false, error: null, recipe: null });
+
+  async function getRecipe(meal: string, kind: string) {
     if (!meal.trim()) return;
-    const text = recipePrompt(meal, kind);
-    navigator.clipboard?.writeText(text).catch(() => {});
-    alert("Recipe request copied to your clipboard — paste it into Claude (or your favorite assistant):\n\n" + text);
+    setRecipeSheet({ open: true, meal, kind, loading: true, error: null, recipe: null });
+    try {
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool: "get_recipe", note: "", meal, kind }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+      setRecipeSheet((s) => ({ ...s, loading: false, recipe: data.proposal }));
+    } catch (e) {
+      setRecipeSheet((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : "Unknown error" }));
+    }
+  }
+
+  function closeRecipeSheet() {
+    setRecipeSheet({ open: false, meal: "", kind: "dinner", loading: false, error: null, recipe: null });
   }
 
   function skipPrompt(d: Dinner) {
@@ -191,6 +216,15 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
 
   return (
     <div className="wrap">
+      {recipeSheet.open && (
+        <RecipeSheet
+          meal={recipeSheet.meal}
+          loading={recipeSheet.loading}
+          error={recipeSheet.error}
+          recipe={recipeSheet.recipe}
+          onClose={closeRecipeSheet}
+        />
+      )}
       <header className="top">
         <div>
           <h1>Fosso Meal Planner</h1>
@@ -220,7 +254,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         dinners={dinners}
         items={items}
         currentWeek={currentWeek}
-        onApply={(changes, additions) => {
+        onApply={(changes, additions, proposalId) => {
           // optimistic merge: apply dinner changes locally, append shopping additions
           setDinners((p) => p.map((d) => {
             const c = changes.find((x) => x.day === d.day);
@@ -236,7 +270,10 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
               createdAt: new Date(),
             })),
           ]);
-          startTransition(() => applyPlanChanges(changes, additions));
+          startTransition(() => applyPlanChanges(changes, additions, proposalId));
+        }}
+        onReject={(proposalId) => {
+          if (proposalId !== undefined) startTransition(() => rejectProposal(proposalId));
         }}
       />
 
@@ -533,6 +570,119 @@ function BudgetSection({
   );
 }
 
+/* ---------- Recipe sheet ---------- */
+function RecipeSheet({
+  meal, loading, error, recipe, onClose,
+}: {
+  meal: string;
+  loading: boolean;
+  error: string | null;
+  recipe: Recipe | null;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(20, 18, 14, 0.55)",
+        display: "flex", alignItems: "flex-end", justifyContent: "center",
+        padding: 12,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg, #faf8f3)",
+          maxWidth: 640, width: "100%",
+          maxHeight: "90vh", overflowY: "auto",
+          borderRadius: "16px 16px 8px 8px",
+          padding: "20px 22px 28px",
+          boxShadow: "0 -8px 40px rgba(0,0,0,0.18)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+          <div className="dash-tom-tag t-cook" style={{ fontSize: 11 }}>Recipe</div>
+          <button
+            className="btn-ghost"
+            onClick={onClose}
+            style={{ padding: "4px 10px", fontSize: 14 }}
+          >
+            Close ✕
+          </button>
+        </div>
+
+        {loading && (
+          <div style={{ padding: "20px 0", textAlign: "center" }}>
+            <div style={{ fontSize: 16, marginBottom: 4 }}>Writing recipe for</div>
+            <div style={{ fontSize: 18, fontWeight: 500 }}>{meal}</div>
+            <div className="note" style={{ marginTop: 12 }}>Sized for the family · GF · DF-aware…</div>
+          </div>
+        )}
+
+        {error && !loading && (
+          <div style={{ padding: "16px 0" }}>
+            <div style={{ fontWeight: 500, fontSize: 16, marginBottom: 6 }}>Couldn&apos;t generate</div>
+            <div className="hint" style={{ color: "var(--coral-ink, #c4452a)" }}>{error}</div>
+          </div>
+        )}
+
+        {recipe && !loading && (
+          <>
+            <h2 style={{ marginTop: 0, fontSize: 22, lineHeight: 1.25 }}>{recipe.title}</h2>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", margin: "8px 0 14px", fontSize: 13, color: "var(--ink-2)" }}>
+              <span>🍽 {recipe.servings}</span>
+              <span>⏱ {recipe.prep_time} prep</span>
+              <span>🔥 {recipe.cook_time}</span>
+            </div>
+
+            {recipe.when_to_start && (
+              <div className="last-week-banner good" style={{ marginBottom: 14 }}>
+                <i className="ti ti-clock" />
+                <div><strong>Start by:</strong> {recipe.when_to_start}</div>
+              </div>
+            )}
+
+            <h3 style={{ fontSize: 14, fontWeight: 500, margin: "16px 0 6px", textTransform: "uppercase", letterSpacing: 0.3, color: "var(--ink-2)" }}>
+              Ingredients
+            </h3>
+            <ul style={{ paddingLeft: 18, margin: 0, fontSize: 14, lineHeight: 1.7 }}>
+              {recipe.ingredients.map((ing, i) => (
+                <li key={i}>
+                  <strong>{ing.amount}</strong> {ing.item}
+                  {ing.note && <span className="gf-mini" style={{ display: "inline", marginLeft: 6 }}>({ing.note})</span>}
+                </li>
+              ))}
+            </ul>
+
+            <h3 style={{ fontSize: 14, fontWeight: 500, margin: "20px 0 6px", textTransform: "uppercase", letterSpacing: 0.3, color: "var(--ink-2)" }}>
+              Steps
+            </h3>
+            <ol style={{ paddingLeft: 22, margin: 0, fontSize: 14, lineHeight: 1.8 }}>
+              {recipe.steps.map((s, i) => (
+                <li key={i} style={{ marginBottom: 4 }}>{s}</li>
+              ))}
+            </ol>
+
+            {recipe.tips.length > 0 && (
+              <>
+                <h3 style={{ fontSize: 14, fontWeight: 500, margin: "20px 0 6px", textTransform: "uppercase", letterSpacing: 0.3, color: "var(--ink-2)" }}>
+                  Tips
+                </h3>
+                <ul style={{ paddingLeft: 18, margin: 0, fontSize: 14, lineHeight: 1.7 }}>
+                  {recipe.tips.map((t, i) => (
+                    <li key={i}>{t}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---------- AI modify-week ---------- */
 type ProposalDinnerChange = {
   day: string;
@@ -556,33 +706,37 @@ type Proposal = {
 };
 
 function AiModifyWeek({
-  dinners, items, currentWeek, onApply,
+  dinners, items, currentWeek, onApply, onReject,
 }: {
   dinners: Dinner[];
   items: Item[];
   currentWeek: number;
-  onApply: (changes: ProposalDinnerChange[], additions: ProposalAddition[]) => void;
+  onApply: (changes: ProposalDinnerChange[], additions: ProposalAddition[], proposalId?: number) => void;
+  onReject: (proposalId?: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [proposalId, setProposalId] = useState<number | undefined>(undefined);
 
   async function submit() {
     setError(null);
     setProposal(null);
+    setProposalId(undefined);
     if (!note.trim()) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/plan/modify", {
+      const res = await fetch("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note, dinners, items, currentWeek }),
+        body: JSON.stringify({ tool: "modify_week", note, dinners, items, currentWeek }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
       setProposal(data.proposal);
+      setProposalId(data.proposalId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
@@ -592,14 +746,17 @@ function AiModifyWeek({
 
   function accept() {
     if (!proposal) return;
-    onApply(proposal.dinner_changes, proposal.shopping_additions);
+    onApply(proposal.dinner_changes, proposal.shopping_additions, proposalId);
     setProposal(null);
+    setProposalId(undefined);
     setNote("");
     setOpen(false);
   }
 
   function reject() {
+    onReject(proposalId);
     setProposal(null);
+    setProposalId(undefined);
   }
 
   return (
