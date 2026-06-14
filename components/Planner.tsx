@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect, useRef } from "react";
 import type { Item, Dinner, Expense, Household } from "@/db/schema";
 import {
   STORE, STORE_ORDER, ROUTE_PLAN, STAPLES,
@@ -11,6 +11,7 @@ import {
   addItem, toggleItem, deleteItem, clearCheckedItems,
   updateDinnerMeal, setDinnerSkip,
   addExpense, setCurrentWeek, closeOutWeek, clearLastWeek,
+  getAllState,
 } from "@/app/actions";
 
 type Props = {
@@ -61,7 +62,38 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   const [dinners, setDinners] = useState(initialDinners);
   const [expenses, setExpenses] = useState(initialExpenses);
   const [household, setHousehold] = useState(initialHousehold);
-  const [, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
+
+  // Live sync: refetch on focus + every 20s while visible, so a second
+  // phone's changes show up without a manual refresh. Skipped while a
+  // transition is in flight to avoid clobbering optimistic updates.
+  const isPendingRef = useRef(false);
+  useEffect(() => { isPendingRef.current = isPending; }, [isPending]);
+  useEffect(() => {
+    let canceled = false;
+    async function refresh() {
+      if (canceled || document.hidden || isPendingRef.current) return;
+      try {
+        const s = await getAllState();
+        if (canceled) return;
+        setItems(s.items);
+        setDinners(s.dinners);
+        setExpenses(s.expenses);
+        setHousehold(s.household);
+      } catch { /* transient — next tick retries */ }
+    }
+    const onFocus = () => refresh();
+    const onVisibility = () => { if (!document.hidden) refresh(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    const id = setInterval(refresh, 20_000);
+    return () => {
+      canceled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      clearInterval(id);
+    };
+  }, []);
 
   const currentWeek = household.currentWeek;
   const active = items.filter((i) => !i.done);
