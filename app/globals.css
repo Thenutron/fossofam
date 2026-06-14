@@ -110,17 +110,28 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
   .card h2 { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
   .card .note { font-size: 13px; color: var(--ink-2); margin-bottom: 14px; }
 
-  /* DINNERS */
+  /* DINNERS — mobile-first vertical card per day */
   .day-row {
-    display: grid; grid-template-columns: 92px 1fr auto;
-    gap: 12px; align-items: center;
-    padding: 11px 0; border-bottom: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 12px 0 14px; border-bottom: 1px solid var(--line);
   }
   .day-row:last-child { border-bottom: none; }
-  .day-name { font-weight: 600; font-size: 14px; }
+  .day-row.today { padding: 12px; margin: 0 -12px; border-bottom: none;
+    background: rgba(36, 110, 110, 0.05); border-radius: 10px; }
+  .day-row.today + .day-row { border-top: 1px solid var(--line); }
+  .day-row-head {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+  .day-name { font-weight: 600; font-size: 15px; line-height: 1.2; }
+  .day-date { color: var(--ink-3); font-weight: 400; font-size: 13px; margin-left: 4px; }
   .day-tag {
-    display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 20px;
-    margin-top: 3px; font-weight: 600;
+    display: inline-flex; align-items: center; font-size: 11px; padding: 2px 9px;
+    border-radius: 999px; font-weight: 600; line-height: 1.4;
+  }
+  .day-today-pill {
+    display: inline-flex; align-items: center; font-size: 10px; font-weight: 700;
+    padding: 2px 7px; border-radius: 999px; letter-spacing: 0.3px;
+    background: #1d6e6e; color: #fff; text-transform: uppercase;
   }
   .t-crock { background: var(--teal-bg); color: var(--teal-ink); }
   .t-lazy { background: var(--amber-bg); color: var(--amber-ink); }
@@ -141,10 +152,14 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
   .gf-mini { font-size: 12px; color: var(--ink-3); margin-top: 3px; }
   .swap-btn {
     appearance: none; border: 1px solid var(--line); background: var(--surface);
-    cursor: pointer; border-radius: var(--radius-sm); padding: 6px 10px;
+    cursor: pointer; border-radius: 999px; padding: 7px 12px;
     font-size: 12.5px; color: var(--ink-2); font-family: var(--font); white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
   }
   .swap-btn:hover { border-color: var(--line-2); color: var(--ink); }
+  .swap-btn:active { transform: scale(0.97); }
+  .day-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .day-actions .swap-btn { padding: 6px 11px; font-size: 12.5px; }
 
   .ideas { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 6px; }
   .idea-chip {
@@ -366,8 +381,12 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
     .card { border-color: #ccc; }
   }
   @media (max-width: 560px) {
-    .day-row { grid-template-columns: 80px 1fr; }
-    .swap-btn { grid-column: 2; justify-self: start; }
+    .wrap { padding: 12px 14px 32px; }
+    .card { padding: 16px 14px; border-radius: 12px; }
+    .top { padding: 4px 0 16px; }
+    .top h1 { font-size: 28px; letter-spacing: -0.5px; }
+    .card h2 { font-size: 16px; }
     .budget-line { grid-template-columns: 1fr 90px; }
     .budget-line .bl-store { display: none; }
+    .day-row.today { margin: 0 -10px; padding: 12px 10px; }
   }

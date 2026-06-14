@@ -366,31 +366,27 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
               : "";
             return (
               <div key={d.id}>
-                <div
-                  className={"day-row" + (d.skip ? " skipped" : "")}
-                  style={isToday ? { background: "rgba(36, 110, 110, 0.06)", borderRadius: 8 } : undefined}
-                >
-                  <div>
-                    <div className="day-name">
-                      {d.day}
-                      {dateLabel && <span style={{ fontWeight: 400, color: "var(--ink-3)", marginLeft: 6, fontSize: 13 }}>· {dateLabel}</span>}
-                      {isToday && <span className="day-tag t-cook" style={{ marginLeft: 8, fontSize: 10, verticalAlign: "middle" }}>today</span>}
-                    </div>
+                <div className={"day-row" + (d.skip ? " skipped" : "") + (isToday ? " today" : "")}>
+                  <div className="day-row-head">
+                    <span className="day-name">{d.day}</span>
+                    {dateLabel && <span className="day-date">· {dateLabel}</span>}
+                    {isToday && <span className="day-today-pill">today</span>}
+                    <span style={{ flex: 1 }} />
                     <span className={"day-tag t-" + (d.skip ? "skip" : d.tag)}>{d.skip ? "Skipped" : d.label}</span>
                   </div>
                   {d.skip ? (
-                    <div><div className="skip-reason">{d.skipReason || "No dinner needed"}</div></div>
+                    <div className="skip-reason">{d.skipReason || "No dinner needed"}</div>
                   ) : (
-                    <div>
+                    <>
                       <input
                         className="meal-input"
                         defaultValue={d.meal}
                         onBlur={(e) => { if (e.target.value !== d.meal) doUpdateMeal(d.id, e.target.value); }}
                       />
                       {d.note && <div className="gf-mini">{d.note}</div>}
-                    </div>
+                    </>
                   )}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div className="day-actions">
                     {d.skip ? (
                       <button className="swap-btn" onClick={() => doSkip(d.id, false, "")}>↩ un-skip</button>
                     ) : (
