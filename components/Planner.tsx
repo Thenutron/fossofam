@@ -291,6 +291,58 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
     setRowMenu(null);
     setActiveRow(null);
   }
+
+  // AI fresh-idea state per swap-open dinner. Lives in Planner so it
+  // resets when the user moves between days.
+  const [aiSwap, setAiSwap] = useState<{
+    dinnerId: number;
+    loading: boolean;
+    error: string | null;
+    meal?: string;
+    label?: string;
+    note?: string;
+    reason?: string;
+  } | null>(null);
+
+  async function fetchAiIdea(d: Dinner) {
+    setAiSwap({ dinnerId: d.id, loading: true, error: null });
+    try {
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tool: "suggest_meal",
+          note: "",
+          day: d.day,
+          kind: d.tag,
+          dinners,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+      setAiSwap({
+        dinnerId: d.id,
+        loading: false,
+        error: null,
+        meal: data.proposal.meal,
+        label: data.proposal.label,
+        note: data.proposal.note,
+        reason: data.proposal.reason,
+      });
+    } catch (e) {
+      setAiSwap({
+        dinnerId: d.id,
+        loading: false,
+        error: e instanceof Error ? e.message : "Unknown error",
+      });
+    }
+  }
+
+  function applyAiIdea(d: Dinner) {
+    if (!aiSwap || aiSwap.dinnerId !== d.id || !aiSwap.meal) return;
+    applySwap(d, aiSwap.meal, d.tag, aiSwap.label || d.label);
+    setAiSwap(null);
+  }
   function skipOther(d: Dinner) {
     const r = prompt(`Skip ${d.day} — reason?`, "Leftovers");
     if (r === null) return;
@@ -479,6 +531,37 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
                 )}
                 {swapOpen && (
                   <div className="row-sub">
+                    {/* AI fresh idea — generates one new meal idea for this
+                        day at the same effort tier. Cheap to re-roll. */}
+                    <div style={{ marginBottom: 10 }}>
+                      <div className="row-sub-label">✨ AI</div>
+                      {aiSwap?.dinnerId === d.id && aiSwap.meal ? (
+                        <div className="ai-suggestion">
+                          <div className="ai-meal">{aiSwap.meal}</div>
+                          {aiSwap.reason && <div className="ai-reason">{aiSwap.reason}</div>}
+                          {aiSwap.note && <div className="gf-mini" style={{ marginTop: 4 }}>{aiSwap.note}</div>}
+                          <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                            <button className="btn-primary" onClick={() => applyAiIdea(d)}>Use it</button>
+                            <button className="btn-ghost" onClick={() => fetchAiIdea(d)}>🎲 Another</button>
+                            <button className="btn-ghost" onClick={() => setAiSwap(null)}>Hide</button>
+                          </div>
+                        </div>
+                      ) : aiSwap?.dinnerId === d.id && aiSwap.loading ? (
+                        <div className="ai-suggestion">Thinking…</div>
+                      ) : aiSwap?.dinnerId === d.id && aiSwap.error ? (
+                        <div className="ai-suggestion" style={{ color: "var(--coral-ink)" }}>
+                          {aiSwap.error}
+                          <div style={{ marginTop: 8 }}>
+                            <button className="btn-ghost" onClick={() => fetchAiIdea(d)}>Try again</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button className="idea-chip ai-trigger" onClick={() => fetchAiIdea(d)}>
+                          ✨ Fresh AI idea for {d.day}
+                        </button>
+                      )}
+                    </div>
+
                     {SWAP_OPTIONS.map((group) => (
                       <div key={group.tier} style={{ marginBottom: 8 }}>
                         <div className="row-sub-label">{group.tier}</div>

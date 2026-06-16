@@ -13,7 +13,7 @@
 
 import { STORE_ORDER } from "./data";
 
-export type AgentToolName = "modify_week" | "get_recipe" | "import_recipe" | "parse_receipt" | "plan_shopping" | "modify_recipe";
+export type AgentToolName = "modify_week" | "get_recipe" | "import_recipe" | "parse_receipt" | "plan_shopping" | "modify_recipe" | "suggest_meal";
 
 export type AgentTool = {
   name: AgentToolName;
@@ -375,7 +375,40 @@ const modifyRecipeTool: AgentTool = {
   },
 };
 
-export const AGENT_TOOLS: AgentTool[] = [modifyWeekTool, getRecipeTool, importRecipeTool, parseReceiptTool, planShoppingTool, modifyRecipeTool];
+// --- suggest_meal ---
+// One-shot fresh idea for a specific day + effort tier. Used by the
+// per-day "🎲 AI idea" chip in the swap picker. Keeps the family from
+// having to type into Modify Week every time they want one new meal.
+const suggestMealTool: AgentTool = {
+  name: "suggest_meal",
+  description:
+    "Generate exactly ONE fresh meal idea for a specific day + effort tier. Respect dietary constraints (GF household, sometimes DF). Honor per-person preferences (Kait + Revs no shellfish; Knute + Havyn all seafood; Knute high-protein; Kait lots of greens). Don't repeat anything already in the week's rotation. Be specific — 'salmon + roasted potatoes' beats 'fish'. Match the effort tier exactly: lazy = under 5min prep, cook = real cook night, crock = set-and-forget.",
+  input_schema: {
+    type: "object",
+    properties: {
+      meal: {
+        type: "string",
+        description: "Concise meal name, phone-glanceable.",
+      },
+      label: {
+        type: "string",
+        description: "Short tag label that fits the requested tier (e.g. 'Lazy', 'Real cook', 'Crock pot').",
+      },
+      note: {
+        type: "string",
+        description: "Optional 1-line context (cooking tip, leftover hint, GF brand). Empty string if none.",
+      },
+      reason: {
+        type: "string",
+        description: "1 sentence in family tone — why this idea fits this day. Terse.",
+      },
+    },
+    required: ["meal", "label", "note", "reason"],
+    additionalProperties: false,
+  },
+};
+
+export const AGENT_TOOLS: AgentTool[] = [modifyWeekTool, getRecipeTool, importRecipeTool, parseReceiptTool, planShoppingTool, modifyRecipeTool, suggestMealTool];
 
 export function getTool(name: AgentToolName): AgentTool {
   const tool = AGENT_TOOLS.find((t) => t.name === name);
@@ -429,6 +462,13 @@ export type ImportRecipeProposal = {
   family_fit_warnings: string;
 };
 
+export type SuggestMealProposal = {
+  meal: string;
+  label: string;
+  note: string;
+  reason: string;
+};
+
 export type ModifyRecipeProposal = {
   title: string;
   servings: string;
@@ -478,4 +518,5 @@ export type ToolOutput =
   | { tool: "import_recipe"; data: ImportRecipeProposal }
   | { tool: "parse_receipt"; data: ReceiptProposal }
   | { tool: "plan_shopping"; data: PlanShoppingProposal }
-  | { tool: "modify_recipe"; data: ModifyRecipeProposal };
+  | { tool: "modify_recipe"; data: ModifyRecipeProposal }
+  | { tool: "suggest_meal"; data: SuggestMealProposal };

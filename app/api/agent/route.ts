@@ -19,7 +19,7 @@ import { eq, sql } from "drizzle-orm";
 import { FAMILY_NARRATIVE, TONE } from "@/lib/familyProfile";
 import { STORE, STORE_ORDER, ROUTE_PLAN, STAPLES, LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS } from "@/lib/data";
 import { llm, LlmError, type LlmImageMediaType } from "@/lib/llm";
-import { getTool, type AgentToolName, type ModifyWeekProposal, type RecipeProposal, type ReceiptProposal, type PlanShoppingProposal, type ModifyRecipeProposal } from "@/lib/agentTools";
+import { getTool, type AgentToolName, type ModifyWeekProposal, type RecipeProposal, type ReceiptProposal, type PlanShoppingProposal, type ModifyRecipeProposal, type SuggestMealProposal } from "@/lib/agentTools";
 import type { Dinner, Item } from "@/db/schema";
 
 export const runtime = "nodejs";
@@ -90,6 +90,8 @@ type AgentRequest = {
   forceFresh?: boolean;
   // For modify_recipe — the existing recipe payload to mutate.
   currentRecipe?: Record<string, unknown>;
+  // For suggest_meal — which day of the week to generate for.
+  day?: string;
 };
 
 // Strip HTML to readable text for the LLM. Good-enough heuristic for the
@@ -171,6 +173,20 @@ ${extras?.recipeText ?? "(no text — fetch failed)"}
 ${req.note?.trim() || "(none)"}
 
 Extract the actual recipe from the page text above. Ignore the blog narrative, ads, comments, related-recipe links. Suggest a day to slot it into based on its effort, propose shopping_additions only for ingredients the family probably doesn't already have, and flag any family_fit_warnings (especially shellfish for Kait/Revs).`;
+  }
+  if (req.tool === "suggest_meal") {
+    const dinners = req.dinners ?? [];
+    return `# Request
+Day: ${req.day || "(any)"}
+Effort tier: ${req.kind || "dinner"}
+
+# Current week's rotation (DO NOT propose duplicates of these)
+${dinners.map((d) => `- ${d.day}: ${d.meal}${d.tag ? " [" + d.tag + "]" : ""}`).join("\n")}
+
+# Family note
+${req.note?.trim() || "(none)"}
+
+Return ONE specific meal idea via suggest_meal. It must match the requested effort tier exactly.`;
   }
   if (req.tool === "modify_recipe") {
     const current = req.currentRecipe ?? {};
@@ -344,7 +360,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const proposalData = toolUse.input as ModifyWeekProposal | RecipeProposal | ReceiptProposal | PlanShoppingProposal | ModifyRecipeProposal;
+    const proposalData = toolUse.input as ModifyWeekProposal | RecipeProposal | ReceiptProposal | PlanShoppingProposal | ModifyRecipeProposal | SuggestMealProposal;
 
     // Cache the recipe for future calls so we don't regenerate the same meal.
     if (body.tool === "get_recipe" && body.meal) {
