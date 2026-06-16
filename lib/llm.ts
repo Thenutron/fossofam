@@ -19,9 +19,17 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export type LlmRole = "user" | "assistant";
 
+export type LlmImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+export type LlmContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: LlmImageMediaType; data: string } };
+
 export type LlmMessage = {
   role: LlmRole;
-  content: string; // keep it simple: text-only messages for now
+  // Text-only call: pass a string. Multimodal (e.g. receipt photo + prompt):
+  // pass an array of blocks.
+  content: string | LlmContentBlock[];
 };
 
 export type LlmTool = {
@@ -111,7 +119,13 @@ async function callAnthropic(input: LlmInput): Promise<LlmResponse> {
       tool_choice: input.toolChoice,
       messages: input.messages.map((m) => ({
         role: m.role,
-        content: m.content,
+        content: typeof m.content === "string"
+          ? m.content
+          : m.content.map((b) =>
+              b.type === "image"
+                ? { type: "image" as const, source: b.source }
+                : { type: "text" as const, text: b.text },
+            ),
       })),
     });
 

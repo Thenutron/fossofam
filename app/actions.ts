@@ -45,6 +45,41 @@ export async function updateItemCost(id: number, cost: number | null) {
   revalidatePath("/");
 }
 
+// Apply a parsed-receipt diff in one shot: update cart-item prices, optionally
+// add receipt-only items, and log a single expense at the receipt total.
+// Items get marked done=true since the receipt is proof they were bought.
+export async function applyReceipt(payload: {
+  updates: { id: number; cost: number }[];
+  adds: { name: string; store: string; cost: number }[];
+  expense: { name: string; amount: number; kind: string };
+}) {
+  const now = new Date();
+  for (const u of payload.updates) {
+    await db
+      .update(items)
+      .set({ cost: u.cost, costAt: now, done: true })
+      .where(eq(items.id, u.id));
+  }
+  for (const a of payload.adds) {
+    const name = a.name.trim();
+    if (!name) continue;
+    await db.insert(items).values({
+      name,
+      store: a.store,
+      cost: a.cost,
+      costAt: now,
+      done: true,
+    });
+  }
+  const expName = payload.expense.name.trim() || "Shopping trip";
+  await db.insert(expenses).values({
+    name: expName,
+    amount: payload.expense.amount || 0,
+    kind: payload.expense.kind || "weekly",
+  });
+  revalidatePath("/");
+}
+
 // ---- Dinners ----
 export async function getDinners() {
   const rows = await db.select().from(dinners).orderBy(dinners.sortOrder);

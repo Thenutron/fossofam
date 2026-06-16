@@ -12,6 +12,7 @@ import {
   updateDinnerMeal, updateDinnerSlot, setDinnerSkip,
   addExpense, deleteExpense, setCurrentWeek, closeOutWeek, clearLastWeek,
   getAllState, applyPlanChanges, rejectProposal, applyImportedRecipe,
+  applyReceipt,
 } from "@/app/actions";
 
 type Props = {
@@ -406,6 +407,39 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         onClearChecked={doClearChecked}
         onUpdateCost={doUpdateItemCost}
         onLogTrip={(name, amount, kind) => doAddExpense(name, amount, kind)}
+        onApplyReceipt={(payload) => {
+          const now = new Date();
+          const updateMap = new Map(payload.updates.map((u) => [u.id, u.cost]));
+          setItems((p) => {
+            const updated = p.map((i) =>
+              updateMap.has(i.id)
+                ? { ...i, cost: updateMap.get(i.id)!, costAt: now, done: true }
+                : i,
+            );
+            const added = payload.adds.map((a, idx) => ({
+              id: Date.now() + idx,
+              name: a.name,
+              store: a.store,
+              done: true,
+              cost: a.cost,
+              costAt: now,
+              createdAt: now,
+            }));
+            return [...updated, ...added];
+          });
+          setExpenses((p) => [
+            ...p,
+            {
+              id: Date.now() + 9999,
+              name: payload.expense.name || "Shopping trip",
+              amount: payload.expense.amount,
+              kind: payload.expense.kind,
+              category: "groceries",
+              createdAt: now,
+            },
+          ]);
+          startTransition(() => applyReceipt(payload));
+        }}
         staplesOpen={staplesOpen}
         setStaplesOpen={setStaplesOpen}
       />
@@ -550,6 +584,68 @@ function DinnerSpotlight({
 }
 
 /* ---------- Shopping ---------- */
+type Receipt = {
+  store: string;
+  total: number;
+  subtotal: number;
+  tax: number;
+  matched: {
+    item_id: number;
+    cart_name: string;
+    receipt_name: string;
+    price_in_cart: number | null;
+    price_on_receipt: number;
+  }[];
+  receipt_only: {
+    receipt_name: string;
+    price: number;
+    suggested_store: string;
+  }[];
+  cart_only: {
+    item_id: number;
+    cart_name: string;
+    cart_price: number | null;
+  }[];
+  notes: string;
+};
+
+type ReceiptApplyPayload = {
+  updates: { id: number; cost: number }[];
+  adds: { name: string; store: string; cost: number }[];
+  expense: { name: string; amount: number; kind: string };
+};
+
+// Client-side image compress so we stay under Vercel's 4.5MB body limit and
+// keep model input tokens reasonable. ~1600px on the long side at q=0.85
+// still reads small receipt text fine.
+async function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<{ base64: string; mediaType: string }> {
+  const img = document.createElement("img");
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Failed to read image"));
+      img.src = objectUrl;
+    });
+    const scale = Math.min(1, maxDim / Math.max(img.width || maxDim, img.height || maxDim));
+    const w = Math.max(1, Math.round((img.width || maxDim) * scale));
+    const h = Math.max(1, Math.round((img.height || maxDim) * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("No 2D canvas context");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL("image/jpeg", quality);
+    const idx = dataUrl.indexOf(",");
+    return { base64: dataUrl.slice(idx + 1), mediaType: "image/jpeg" };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 // Per-item cost is persisted on the items table (item.cost, item.costAt).
 // Shop mode is a *view* — it surfaces the $ field next to each row and a
 // running trip total. The data itself is durable: next week's "Apples"
@@ -557,7 +653,7 @@ function DinnerSpotlight({
 // budget proposals in real receipt numbers.
 function ShoppingSection({
   items, active, itemsByStore, onlineActive, currentWeek,
-  onAddItem, onToggle, onDelete, onClearChecked, onUpdateCost, onLogTrip,
+  onAddItem, onToggle, onDelete, onClearChecked, onUpdateCost, onLogTrip, onApplyReceipt,
   staplesOpen, setStaplesOpen,
 }: {
   items: Item[];
@@ -571,6 +667,7 @@ function ShoppingSection({
   onClearChecked: () => void;
   onUpdateCost: (id: number, cost: number | null) => void;
   onLogTrip: (name: string, amount: number, kind: string) => void;
+  onApplyReceipt: (payload: ReceiptApplyPayload) => void;
   staplesOpen: boolean;
   setStaplesOpen: (v: boolean | ((prev: boolean) => boolean)) => void;
 }) {
@@ -579,6 +676,74 @@ function ShoppingSection({
   // Local edit buffer keyed by item id. Only used while the field is being
   // edited; on blur we persist to the DB via onUpdateCost.
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
+
+  // Receipt scan state.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [receiptSheet, setReceiptSheet] = useState<{
+    open: boolean;
+    loading: boolean;
+    error: string | null;
+    receipt: Receipt | null;
+    // Per-row decisions on apply. Defaults to "accept" for everything;
+    // user can flip individual entries off before tapping Apply.
+    matchedKeep: Record<number, boolean>;
+    receiptOnlyKeep: Record<number, boolean>;
+  }>({ open: false, loading: false, error: null, receipt: null, matchedKeep: {}, receiptOnlyKeep: {} });
+
+  async function handleReceiptFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setReceiptSheet({ open: true, loading: true, error: null, receipt: null, matchedKeep: {}, receiptOnlyKeep: {} });
+    try {
+      const { base64, mediaType } = await compressImage(file);
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tool: "parse_receipt",
+          note: "",
+          imageBase64: base64,
+          imageMediaType: mediaType,
+          items,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+      const receipt = data.proposal as Receipt;
+      // Default: accept all matched + all receipt-only adds.
+      const matchedKeep: Record<number, boolean> = {};
+      receipt.matched.forEach((m) => { matchedKeep[m.item_id] = true; });
+      const receiptOnlyKeep: Record<number, boolean> = {};
+      receipt.receipt_only.forEach((_, i) => { receiptOnlyKeep[i] = true; });
+      setReceiptSheet({ open: true, loading: false, error: null, receipt, matchedKeep, receiptOnlyKeep });
+    } catch (err) {
+      setReceiptSheet({ open: true, loading: false, error: err instanceof Error ? err.message : "Unknown error", receipt: null, matchedKeep: {}, receiptOnlyKeep: {} });
+    }
+  }
+
+  function closeReceiptSheet() {
+    setReceiptSheet({ open: false, loading: false, error: null, receipt: null, matchedKeep: {}, receiptOnlyKeep: {} });
+  }
+
+  function applyReceiptDiff() {
+    const r = receiptSheet.receipt;
+    if (!r) return;
+    const updates = r.matched
+      .filter((m) => receiptSheet.matchedKeep[m.item_id])
+      .map((m) => ({ id: m.item_id, cost: m.price_on_receipt }));
+    const adds = r.receipt_only
+      .filter((_, i) => receiptSheet.receiptOnlyKeep[i])
+      .map((ro) => ({ name: ro.receipt_name, store: ro.suggested_store, cost: ro.price }));
+    const kind = currentWeek === 3 ? "bulk" : "weekly";
+    onApplyReceipt({
+      updates,
+      adds,
+      expense: { name: r.store || "Shopping trip", amount: r.total, kind },
+    });
+    closeReceiptSheet();
+    setShopMode(false);
+  }
 
   // Persist shop-mode toggle only (cheap; nice to survive a refresh).
   useEffect(() => {
@@ -658,8 +823,33 @@ function ShoppingSection({
             <div className="smb-total">${tripTotal.toFixed(2)}</div>
             <div className="smb-count">{tripItemCount} {tripItemCount === 1 ? "item" : "items"} in cart</div>
           </div>
+          <button className="smb-receipt" onClick={() => fileInputRef.current?.click()} aria-label="Scan receipt">📷</button>
           <button className="btn-primary smb-log" onClick={logTrip}>Log trip</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleReceiptFile}
+            style={{ display: "none" }}
+          />
         </div>
+      )}
+
+      {receiptSheet.open && (
+        <SheetOverlay onClose={closeReceiptSheet}>
+          <ReceiptSheet
+            state={receiptSheet}
+            onToggleMatched={(itemId) =>
+              setReceiptSheet((s) => ({ ...s, matchedKeep: { ...s.matchedKeep, [itemId]: !s.matchedKeep[itemId] } }))
+            }
+            onToggleReceiptOnly={(idx) =>
+              setReceiptSheet((s) => ({ ...s, receiptOnlyKeep: { ...s.receiptOnlyKeep, [idx]: !s.receiptOnlyKeep[idx] } }))
+            }
+            onApply={applyReceiptDiff}
+            onCancel={closeReceiptSheet}
+          />
+        </SheetOverlay>
       )}
 
       {!shopMode && (
@@ -1255,6 +1445,163 @@ function RecipeImport({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ---------- Receipt diff sheet ---------- */
+function ReceiptSheet({
+  state, onToggleMatched, onToggleReceiptOnly, onApply, onCancel,
+}: {
+  state: {
+    loading: boolean;
+    error: string | null;
+    receipt: Receipt | null;
+    matchedKeep: Record<number, boolean>;
+    receiptOnlyKeep: Record<number, boolean>;
+  };
+  onToggleMatched: (itemId: number) => void;
+  onToggleReceiptOnly: (idx: number) => void;
+  onApply: () => void;
+  onCancel: () => void;
+}) {
+  if (state.loading) {
+    return (
+      <div>
+        <h2 className="sheet-h2">Reading receipt…</h2>
+        <div className="note">Compressing + parsing the photo. Usually 5-10 seconds.</div>
+      </div>
+    );
+  }
+  if (state.error) {
+    return (
+      <div>
+        <h2 className="sheet-h2">Couldn&apos;t read the receipt</h2>
+        <div className="hint" style={{ color: "var(--coral-ink, #c4452a)" }}>{state.error}</div>
+        <div className="toolbar" style={{ marginTop: 14 }}>
+          <button className="btn-ghost" onClick={onCancel}>Close</button>
+        </div>
+      </div>
+    );
+  }
+  const r = state.receipt;
+  if (!r) return null;
+
+  const updatesTotal = r.matched
+    .filter((m) => state.matchedKeep[m.item_id])
+    .reduce((s, m) => s + m.price_on_receipt, 0);
+  const addsTotal = r.receipt_only
+    .filter((_, i) => state.receiptOnlyKeep[i])
+    .reduce((s, ro) => s + ro.price, 0);
+  const computedTotal = updatesTotal + addsTotal;
+  const diffFromReceipt = computedTotal - r.total;
+
+  return (
+    <div>
+      <h2 className="sheet-h2">{r.store === "unknown" || !r.store ? "Receipt" : r.store}</h2>
+      <div className="receipt-summary">
+        <div className="rs-block">
+          <div className="rs-label">Receipt total</div>
+          <div className="rs-val">${r.total.toFixed(2)}</div>
+        </div>
+        <div className="rs-block">
+          <div className="rs-label">Will log as</div>
+          <div className="rs-val rs-will">${r.total.toFixed(2)}</div>
+        </div>
+        {Math.abs(diffFromReceipt) > 0.5 && (
+          <div className="rs-block rs-warn">
+            <div className="rs-label">Items vs total</div>
+            <div className="rs-val">{diffFromReceipt > 0 ? "+" : "−"}${Math.abs(diffFromReceipt).toFixed(2)}</div>
+          </div>
+        )}
+      </div>
+
+      {r.notes && (
+        <div className="last-week-banner over" style={{ marginBottom: 14 }}>
+          <i className="ti ti-info-circle" />
+          <div>{r.notes}</div>
+        </div>
+      )}
+
+      {r.matched.length > 0 && (
+        <>
+          <div className="sheet-h3">Matched ({r.matched.length}) — prices update</div>
+          {r.matched.map((m) => {
+            const keep = state.matchedKeep[m.item_id];
+            const priceChanged = m.price_in_cart != null && Math.abs(m.price_on_receipt - m.price_in_cart) > 0.5;
+            return (
+              <label key={m.item_id} className={"receipt-row" + (keep ? "" : " off")}>
+                <input
+                  type="checkbox"
+                  checked={!!keep}
+                  onChange={() => onToggleMatched(m.item_id)}
+                />
+                <div className="rr-name">
+                  {m.cart_name}
+                  {m.receipt_name && m.receipt_name.toLowerCase() !== m.cart_name.toLowerCase() && (
+                    <div className="rr-sub">on receipt: {m.receipt_name}</div>
+                  )}
+                </div>
+                <div className="rr-price">
+                  {priceChanged && m.price_in_cart != null && (
+                    <span className="rr-old">${m.price_in_cart.toFixed(2)} →</span>
+                  )}
+                  <span className={priceChanged ? "rr-new" : ""}>${m.price_on_receipt.toFixed(2)}</span>
+                </div>
+              </label>
+            );
+          })}
+        </>
+      )}
+
+      {r.receipt_only.length > 0 && (
+        <>
+          <div className="sheet-h3" style={{ marginTop: 14 }}>On receipt, not in cart ({r.receipt_only.length}) — add</div>
+          {r.receipt_only.map((ro, i) => {
+            const keep = state.receiptOnlyKeep[i];
+            return (
+              <label key={i} className={"receipt-row" + (keep ? "" : " off")}>
+                <input
+                  type="checkbox"
+                  checked={!!keep}
+                  onChange={() => onToggleReceiptOnly(i)}
+                />
+                <div className="rr-name">
+                  {ro.receipt_name}
+                  <div className="rr-sub">→ {ro.suggested_store}</div>
+                </div>
+                <div className="rr-price">
+                  <span className="rr-new">${ro.price.toFixed(2)}</span>
+                </div>
+              </label>
+            );
+          })}
+        </>
+      )}
+
+      {r.cart_only.length > 0 && (
+        <>
+          <div className="sheet-h3" style={{ marginTop: 14 }}>In cart, not on receipt ({r.cart_only.length})</div>
+          <div className="note" style={{ marginBottom: 6 }}>Probably for a different store. Left as-is.</div>
+          {r.cart_only.map((co) => (
+            <div key={co.item_id} className="receipt-row dim">
+              <div style={{ width: 22 }} />
+              <div className="rr-name">
+                {co.cart_name}
+                {co.cart_price != null && <div className="rr-sub">listed at ${co.cart_price.toFixed(2)}</div>}
+              </div>
+              <div className="rr-price rr-old">—</div>
+            </div>
+          ))}
+        </>
+      )}
+
+      <div className="toolbar" style={{ marginTop: 18 }}>
+        <button className="btn-primary" onClick={onApply}>
+          Apply &amp; log ${r.total.toFixed(2)}
+        </button>
+        <button className="btn-ghost" onClick={onCancel}>Cancel</button>
+      </div>
     </div>
   );
 }

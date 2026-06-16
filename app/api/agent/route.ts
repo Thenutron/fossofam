@@ -17,8 +17,8 @@ import { db } from "@/db";
 import { agentProposals } from "@/db/schema";
 import { FAMILY_NARRATIVE, TONE } from "@/lib/familyProfile";
 import { STORE, STORE_ORDER, ROUTE_PLAN, STAPLES, LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS } from "@/lib/data";
-import { llm, LlmError } from "@/lib/llm";
-import { getTool, type AgentToolName, type ModifyWeekProposal, type RecipeProposal } from "@/lib/agentTools";
+import { llm, LlmError, type LlmImageMediaType } from "@/lib/llm";
+import { getTool, type AgentToolName, type ModifyWeekProposal, type RecipeProposal, type ReceiptProposal } from "@/lib/agentTools";
 import type { Dinner, Item } from "@/db/schema";
 
 export const runtime = "nodejs";
@@ -78,6 +78,9 @@ type AgentRequest = {
   kind?: string; // "crock" | "lazy" | "cook" | "left" | "flex" | "bake" | "dinner"
   // For import_recipe specifically
   url?: string;
+  // For parse_receipt specifically — base64 JPEG/PNG sans the data: prefix.
+  imageBase64?: string;
+  imageMediaType?: string;
 };
 
 // Strip HTML to readable text for the LLM. Good-enough heuristic for the
@@ -160,6 +163,24 @@ ${req.note?.trim() || "(none)"}
 
 Extract the actual recipe from the page text above. Ignore the blog narrative, ads, comments, related-recipe links. Suggest a day to slot it into based on its effort, propose shopping_additions only for ingredients the family probably doesn't already have, and flag any family_fit_warnings (especially shellfish for Kait/Revs).`;
   }
+  if (req.tool === "parse_receipt") {
+    const items = req.items ?? [];
+    return `# Cart (what's currently on the family's shopping list)
+${items.length === 0
+  ? "(empty — everything on the receipt is receipt_only)"
+  : items.map((i) => `- id=${i.id} "${i.name}" @ ${i.store}${i.cost != null ? ` (current cost: $${i.cost})` : ""}${i.done ? " [checked]" : ""}`).join("\n")}
+
+# Task
+The attached image is a grocery receipt. Reconcile it against the cart above.
+
+1. Read the store name from the header and the grand total at the bottom.
+2. For each line item on the receipt, match it to the closest cart item by id. Be lenient — receipts use abbreviations (GRD BF → ground beef, OG/ORG → organic, GS → granny smith, single-letter prefixes are produce-code).
+3. If a receipt line doesn't match anything in the cart, put it under receipt_only with a CLEANED name (expand abbreviations) and the best store guess from the enum.
+4. If a cart item isn't on the receipt, put it under cart_only.
+5. If the photo is blurry/unreadable, return store='unknown', total=0, empty arrays, and explain in notes.
+
+${req.note?.trim() ? `# Family note\n${req.note.trim()}\n` : ""}`;
+  }
   return req.note.trim();
 }
 
@@ -196,9 +217,37 @@ export async function POST(req: Request) {
     }
   }
 
+  // parse_receipt needs an image. Reject early with a clear message rather
+  // than burning a model call on an empty multimodal payload.
+  if (body.tool === "parse_receipt") {
+    if (!body.imageBase64 || typeof body.imageBase64 !== "string") {
+      return NextResponse.json({ error: "parse_receipt requires `imageBase64`" }, { status: 400 });
+    }
+    if (!body.imageMediaType || !/^image\/(jpeg|png|webp|gif)$/.test(body.imageMediaType)) {
+      return NextResponse.json({ error: "parse_receipt requires a JPEG/PNG/WEBP/GIF imageMediaType" }, { status: 400 });
+    }
+  }
+
   const userContent = buildToolContext(body, { recipeText });
 
   try {
+    const userMessage = body.tool === "parse_receipt" && body.imageBase64 && body.imageMediaType
+      ? {
+          role: "user" as const,
+          content: [
+            {
+              type: "image" as const,
+              source: {
+                type: "base64" as const,
+                media_type: body.imageMediaType as LlmImageMediaType,
+                data: body.imageBase64,
+              },
+            },
+            { type: "text" as const, text: userContent },
+          ],
+        }
+      : { role: "user" as const, content: userContent };
+
     const response = await llm({
       model: "sonnet-4-6",
       maxTokens: 4096,
@@ -211,7 +260,7 @@ export async function POST(req: Request) {
       ],
       tools: [tool],
       toolChoice: { type: "tool", name: tool.name },
-      messages: [{ role: "user", content: userContent }],
+      messages: [userMessage],
     });
 
     const toolUse = response.content.find((b) => b.type === "tool_use");
@@ -222,7 +271,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const proposalData = toolUse.input as ModifyWeekProposal | RecipeProposal;
+    const proposalData = toolUse.input as ModifyWeekProposal | RecipeProposal | ReceiptProposal;
 
     // Log to agent_proposals (best-effort — don't block the response on it).
     let proposalId: number | undefined;

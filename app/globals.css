@@ -236,6 +236,57 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
     padding: 14px 22px; font-size: 16px; font-weight: 700;
     border-radius: 12px; min-height: 52px;
   }
+  .shop-mode-bar .smb-receipt {
+    appearance: none; background: var(--surface); border: 1.5px solid var(--teal-ink);
+    color: var(--teal-ink); cursor: pointer;
+    border-radius: 12px; padding: 0; width: 52px; height: 52px;
+    font-size: 22px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .shop-mode-bar .smb-receipt:active { transform: scale(0.96); }
+
+  /* RECEIPT DIFF SHEET */
+  .receipt-summary {
+    display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 14px;
+  }
+  .receipt-summary .rs-block {
+    flex: 1; min-width: 100px;
+    background: var(--surface-2); border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .receipt-summary .rs-block.rs-warn { background: var(--amber-bg); color: var(--amber-ink); }
+  .receipt-summary .rs-label { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; }
+  .receipt-summary .rs-block.rs-warn .rs-label { color: var(--amber-ink); opacity: 0.85; }
+  .receipt-summary .rs-val { font-size: 22px; font-weight: 700; letter-spacing: -0.4px; margin-top: 2px; }
+  .receipt-summary .rs-will { color: var(--teal-ink); }
+
+  .receipt-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 4px; border-bottom: 1px solid var(--line);
+    cursor: pointer; user-select: none;
+  }
+  .receipt-row:last-of-type { border-bottom: none; }
+  .receipt-row.off { opacity: 0.4; }
+  .receipt-row.dim { opacity: 0.55; cursor: default; }
+  .receipt-row input[type=checkbox] {
+    appearance: none; width: 22px; height: 22px; border: 2px solid var(--line-2);
+    border-radius: 5px; cursor: pointer; flex-shrink: 0; position: relative; background: var(--surface);
+  }
+  .receipt-row input[type=checkbox]:checked { background: var(--teal); border-color: var(--teal); }
+  .receipt-row input[type=checkbox]:checked::after {
+    content: "✓"; color: #fff; font-size: 14px; font-weight: 700;
+    position: absolute; left: 3px; top: -1px;
+  }
+  .receipt-row .rr-name { flex: 1; font-size: 15px; font-weight: 500; }
+  .receipt-row .rr-sub { font-size: 12px; color: var(--ink-3); font-weight: 400; margin-top: 1px; }
+  .receipt-row .rr-price {
+    font-size: 15px; font-weight: 600; text-align: right;
+    white-space: nowrap; flex-shrink: 0;
+    display: flex; align-items: baseline; gap: 6px; justify-content: flex-end;
+  }
+  .receipt-row .rr-old { color: var(--ink-3); font-size: 12.5px; font-weight: 500; }
+  .receipt-row .rr-new { color: var(--teal-ink); font-weight: 700; }
 
   /* Default-mode price input — compact */
   .item-price {

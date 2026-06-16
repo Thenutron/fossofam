@@ -13,7 +13,7 @@
 
 import { STORE_ORDER } from "./data";
 
-export type AgentToolName = "modify_week" | "get_recipe" | "import_recipe";
+export type AgentToolName = "modify_week" | "get_recipe" | "import_recipe" | "parse_receipt";
 
 export type AgentTool = {
   name: AgentToolName;
@@ -207,7 +207,91 @@ const importRecipeTool: AgentTool = {
   },
 };
 
-export const AGENT_TOOLS: AgentTool[] = [modifyWeekTool, getRecipeTool, importRecipeTool];
+// --- parse_receipt ---
+// OCR + diff the family's receipt photo against what's currently in their
+// shopping cart. Returns a structured diff so the client can update item
+// costs, surface duplicates, and log the trip at the receipt total.
+const parseReceiptTool: AgentTool = {
+  name: "parse_receipt",
+  description:
+    "Read a photo of a grocery receipt and reconcile it against the cart. Identify the store + grand total, match each receipt line to a cart item id (fuzzy — receipts use abbreviations like ORG, GRD BF), and split the rest into receipt_only (on receipt, missing from cart) and cart_only (in cart, not on receipt). If the photo is unreadable, return store='unknown', total=0, empty arrays, and explain in notes.",
+  input_schema: {
+    type: "object",
+    properties: {
+      store: {
+        type: "string",
+        description: "Store name from the receipt header (e.g. 'Fred Meyer', 'Grocery Outlet'). Use 'unknown' if you can't read it.",
+      },
+      total: {
+        type: "number",
+        description: "Receipt grand total in dollars. 0 if unreadable.",
+      },
+      subtotal: {
+        type: "number",
+        description: "Subtotal before tax (if visible). 0 if not present.",
+      },
+      tax: {
+        type: "number",
+        description: "Tax amount (if visible). 0 if not present.",
+      },
+      matched: {
+        type: "array",
+        description: "Receipt lines you successfully matched to a cart item.",
+        items: {
+          type: "object",
+          properties: {
+            item_id: { type: "integer", description: "The cart item's id." },
+            cart_name: { type: "string", description: "The cart item's name (echo back)." },
+            receipt_name: { type: "string", description: "Raw text as it appeared on the receipt." },
+            price_in_cart: {
+              type: ["number", "null"],
+              description: "The cart item's current cost. Null if not yet priced.",
+            },
+            price_on_receipt: { type: "number" },
+          },
+          required: ["item_id", "cart_name", "receipt_name", "price_on_receipt", "price_in_cart"],
+          additionalProperties: false,
+        },
+      },
+      receipt_only: {
+        type: "array",
+        description: "Receipt lines that don't match anything in the cart. The family probably bought these but forgot to put them on the list.",
+        items: {
+          type: "object",
+          properties: {
+            receipt_name: { type: "string", description: "Cleaned-up product name (expand abbreviations: 'GRD BF' → 'Ground beef'). Not the raw receipt text." },
+            price: { type: "number" },
+            suggested_store: { type: "string", enum: STORE_ORDER, description: "Best guess store key — usually matches the receipt's store." },
+          },
+          required: ["receipt_name", "price", "suggested_store"],
+          additionalProperties: false,
+        },
+      },
+      cart_only: {
+        type: "array",
+        description: "Cart items that aren't on this receipt. Could be a different store's items, or the family didn't actually buy them.",
+        items: {
+          type: "object",
+          properties: {
+            item_id: { type: "integer" },
+            cart_name: { type: "string" },
+            cart_price: { type: ["number", "null"] },
+          },
+          required: ["item_id", "cart_name", "cart_price"],
+          additionalProperties: false,
+        },
+      },
+      notes: {
+        type: "string",
+        description: "Any caveats — blurry sections, items you couldn't decide on, store guesses. Keep it short. Empty string if nothing to flag.",
+      },
+    },
+    required: ["store", "total", "subtotal", "tax", "matched", "receipt_only", "cart_only", "notes"],
+    additionalProperties: false,
+  },
+};
+
+export const AGENT_TOOLS: AgentTool[] = [modifyWeekTool, getRecipeTool, importRecipeTool, parseReceiptTool];
 
 export function getTool(name: AgentToolName): AgentTool {
   const tool = AGENT_TOOLS.find((t) => t.name === name);
@@ -261,7 +345,33 @@ export type ImportRecipeProposal = {
   family_fit_warnings: string;
 };
 
+export type ReceiptProposal = {
+  store: string;
+  total: number;
+  subtotal: number;
+  tax: number;
+  matched: {
+    item_id: number;
+    cart_name: string;
+    receipt_name: string;
+    price_in_cart: number | null;
+    price_on_receipt: number;
+  }[];
+  receipt_only: {
+    receipt_name: string;
+    price: number;
+    suggested_store: string;
+  }[];
+  cart_only: {
+    item_id: number;
+    cart_name: string;
+    cart_price: number | null;
+  }[];
+  notes: string;
+};
+
 export type ToolOutput =
   | { tool: "modify_week"; data: ModifyWeekProposal }
   | { tool: "get_recipe"; data: RecipeProposal }
-  | { tool: "import_recipe"; data: ImportRecipeProposal };
+  | { tool: "import_recipe"; data: ImportRecipeProposal }
+  | { tool: "parse_receipt"; data: ReceiptProposal };
