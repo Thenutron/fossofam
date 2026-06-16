@@ -13,7 +13,7 @@ import {
   updateDinnerMeal, updateDinnerSlot, setDinnerSkip,
   addExpense, deleteExpense, setCurrentWeek, closeOutWeek, clearLastWeek,
   getAllState, applyPlanChanges, rejectProposal, applyImportedRecipe,
-  applyReceipt,
+  applyReceipt, cacheRecipe,
 } from "@/app/actions";
 
 type Props = {
@@ -1707,13 +1707,33 @@ function RecipeSheet({
                 <div className="hint" style={{ color: "var(--coral-ink, #c4452a)", marginTop: 6 }}>{modifyError}</div>
               )}
               {override && (
-                <button
-                  className="btn-ghost"
-                  style={{ marginTop: 8, fontSize: 12 }}
-                  onClick={() => { setOverride(null); }}
-                >
-                  ↩ revert to saved
-                </button>
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  <button
+                    className="btn-ghost"
+                    style={{ fontSize: 12 }}
+                    onClick={async () => {
+                      if (!override) return;
+                      const defaultName = (override.title || "Recipe") + " (variant)";
+                      const name = window.prompt("Save as variant — name?", defaultName);
+                      if (!name?.trim()) return;
+                      try {
+                        await cacheRecipe(name.trim(), null, override);
+                        alert(`Saved "${name.trim()}". Next time you ask for it, it's instant.`);
+                      } catch (e) {
+                        alert("Couldn't save: " + (e instanceof Error ? e.message : "unknown error"));
+                      }
+                    }}
+                  >
+                    💾 Save as variant
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    style={{ fontSize: 12 }}
+                    onClick={() => { setOverride(null); }}
+                  >
+                    ↩ revert to saved
+                  </button>
+                </div>
               )}
             </div>
           </>
