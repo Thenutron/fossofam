@@ -237,27 +237,28 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
     loading: boolean;
     error: string | null;
     recipe: Recipe | null;
-  }>({ open: false, meal: "", kind: "dinner", loading: false, error: null, recipe: null });
+    cached: boolean;
+  }>({ open: false, meal: "", kind: "dinner", loading: false, error: null, recipe: null, cached: false });
 
-  async function getRecipe(meal: string, kind: string) {
+  async function getRecipe(meal: string, kind: string, forceFresh: boolean = false) {
     if (!meal.trim()) return;
-    setRecipeSheetState({ open: true, meal, kind, loading: true, error: null, recipe: null });
+    setRecipeSheetState({ open: true, meal, kind, loading: true, error: null, recipe: null, cached: false });
     try {
       const res = await fetch("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tool: "get_recipe", note: "", meal, kind }),
+        body: JSON.stringify({ tool: "get_recipe", note: "", meal, kind, forceFresh }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
-      setRecipeSheetState((s) => ({ ...s, loading: false, recipe: data.proposal }));
+      setRecipeSheetState((s) => ({ ...s, loading: false, recipe: data.proposal, cached: !!data.cached }));
     } catch (e) {
       setRecipeSheetState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : "Unknown error" }));
     }
   }
 
   function closeRecipeSheet() {
-    setRecipeSheetState({ open: false, meal: "", kind: "dinner", loading: false, error: null, recipe: null });
+    setRecipeSheetState({ open: false, meal: "", kind: "dinner", loading: false, error: null, recipe: null, cached: false });
   }
 
   // Per-row sub-pickers (skip-reason picker, swap-idea picker)
@@ -318,7 +319,9 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
           loading={recipeSheetState.loading}
           error={recipeSheetState.error}
           recipe={recipeSheetState.recipe}
+          cached={recipeSheetState.cached}
           onClose={closeRecipeSheet}
+          onRegenerate={() => getRecipe(recipeSheetState.meal, recipeSheetState.kind, true)}
         />
       )}
 
@@ -1440,13 +1443,15 @@ function BudgetSection({
 
 /* ---------- Recipe sheet ---------- */
 function RecipeSheet({
-  meal, loading, error, recipe, onClose,
+  meal, loading, error, recipe, cached, onClose, onRegenerate,
 }: {
   meal: string;
   loading: boolean;
   error: string | null;
   recipe: Recipe | null;
+  cached: boolean;
   onClose: () => void;
+  onRegenerate: () => void;
 }) {
   return (
     <div onClick={onClose} className="sheet-bg">
@@ -1474,6 +1479,10 @@ function RecipeSheet({
               <span>🍽 {recipe.servings}</span>
               <span>⏱ {recipe.prep_time} prep</span>
               <span>🔥 {recipe.cook_time}</span>
+              {cached && <span className="cached-badge">saved</span>}
+              <button className="btn-ghost" style={{ marginLeft: "auto", fontSize: 12, padding: "4px 10px" }} onClick={onRegenerate}>
+                🔄 New version
+              </button>
             </div>
 
             {recipe.when_to_start && (

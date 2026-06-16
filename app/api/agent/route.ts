@@ -14,7 +14,8 @@
 
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { agentProposals } from "@/db/schema";
+import { agentProposals, recipes } from "@/db/schema";
+import { eq, sql } from "drizzle-orm";
 import { FAMILY_NARRATIVE, TONE } from "@/lib/familyProfile";
 import { STORE, STORE_ORDER, ROUTE_PLAN, STAPLES, LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS } from "@/lib/data";
 import { llm, LlmError, type LlmImageMediaType } from "@/lib/llm";
@@ -85,6 +86,8 @@ type AgentRequest = {
   // routed here whenever possible; only divert when something truly isn't
   // carried there.
   anchorStore?: string;
+  // For get_recipe — when true, bypass the cache and regenerate from scratch.
+  forceFresh?: boolean;
 };
 
 // Strip HTML to readable text for the LLM. Good-enough heuristic for the
@@ -246,6 +249,35 @@ export async function POST(req: Request) {
     }
   }
 
+  // get_recipe cache short-circuit. If we've seen this exact meal before
+  // and the caller didn't request a fresh regen, return the cached payload
+  // immediately. Saves ~$0.005 + a 5-10s wait per repeat tap.
+  if (body.tool === "get_recipe" && body.meal && !body.forceFresh) {
+    const c = body.meal.trim().toLowerCase().replace(/\s+/g, " ");
+    if (c) {
+      try {
+        const [hit] = await db.select().from(recipes).where(eq(recipes.mealCanonical, c)).limit(1);
+        if (hit) {
+          // Bump usage stats async — don't block the response.
+          db.update(recipes)
+            .set({ usedCount: sql`${recipes.usedCount} + 1`, lastUsedAt: new Date() })
+            .where(eq(recipes.id, hit.id))
+            .catch(() => {});
+          return NextResponse.json({
+            proposalId: undefined,
+            tool: "get_recipe",
+            proposal: hit.payload,
+            cached: true,
+            model: "cache",
+          });
+        }
+      } catch (cacheErr) {
+        console.error("Recipe cache lookup failed:", cacheErr);
+        // Fall through to LLM path on cache error.
+      }
+    }
+  }
+
   // parse_receipt needs an image. Reject early with a clear message rather
   // than burning a model call on an empty multimodal payload.
   if (body.tool === "parse_receipt") {
@@ -301,6 +333,29 @@ export async function POST(req: Request) {
     }
 
     const proposalData = toolUse.input as ModifyWeekProposal | RecipeProposal | ReceiptProposal | PlanShoppingProposal;
+
+    // Cache the recipe for future calls so we don't regenerate the same meal.
+    if (body.tool === "get_recipe" && body.meal) {
+      const c = body.meal.trim().toLowerCase().replace(/\s+/g, " ");
+      if (c) {
+        db.insert(recipes)
+          .values({
+            mealCanonical: c,
+            mealName: body.meal.trim(),
+            kind: body.kind ?? null,
+            payload: proposalData as unknown as Record<string, unknown>,
+          })
+          .onConflictDoUpdate({
+            target: recipes.mealCanonical,
+            set: {
+              payload: proposalData as unknown as Record<string, unknown>,
+              kind: body.kind ?? null,
+              lastUsedAt: new Date(),
+            },
+          })
+          .catch((e) => console.error("Recipe cache write failed:", e));
+      }
+    }
 
     // Log to agent_proposals (best-effort — don't block the response on it).
     let proposalId: number | undefined;

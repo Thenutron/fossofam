@@ -64,6 +64,20 @@ export const people = pgTable("people", {
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
+// Cached recipes keyed by canonical meal name. Hit on get_recipe before
+// burning an LLM call. usedCount + lastUsedAt let us prioritize / prune
+// later. Payload is the same RecipeProposal shape the client renders.
+export const recipes = pgTable("recipes", {
+  id: serial("id").primaryKey(),
+  mealCanonical: text("meal_canonical").notNull().unique(),
+  mealName: text("meal_name").notNull(),
+  kind: text("kind"),
+  payload: jsonb("payload").notNull(),
+  usedCount: integer("used_count").notNull().default(1),
+  lastUsedAt: timestamp("last_used_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Every AI/agent call writes one row here: input note, output proposal,
 // whether the user accepted it, which tool ran, which model was used.
 // This is the substrate for memory ("what worked last cleanse?") and audit
@@ -89,3 +103,4 @@ export type Expense = typeof expenses.$inferSelect;
 export type Household = typeof household.$inferSelect;
 export type Person = typeof people.$inferSelect;
 export type AgentProposal = typeof agentProposals.$inferSelect;
+export type Recipe = typeof recipes.$inferSelect;

@@ -1,8 +1,8 @@
 "use server";
 
 import { db } from "@/db";
-import { items, dinners, expenses, household, agentProposals } from "@/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { items, dinners, expenses, household, agentProposals, recipes } from "@/db/schema";
+import { eq, inArray, sql } from "drizzle-orm";
 import { routeStore, DEFAULT_DINNERS } from "@/lib/data";
 import { revalidatePath } from "next/cache";
 
@@ -52,6 +52,46 @@ export async function bulkDeleteItems(ids: number[]) {
   if (ids.length === 0) return;
   await db.delete(items).where(inArray(items.id, ids));
   revalidatePath("/");
+}
+
+// ---- Recipes (cache) ----
+function canonicalMeal(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export async function getCachedRecipe(meal: string) {
+  const c = canonicalMeal(meal);
+  if (!c) return null;
+  const rows = await db.select().from(recipes).where(eq(recipes.mealCanonical, c)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function cacheRecipe(meal: string, kind: string | null, payload: unknown) {
+  const c = canonicalMeal(meal);
+  if (!c) return;
+  await db
+    .insert(recipes)
+    .values({
+      mealCanonical: c,
+      mealName: meal.trim(),
+      kind: kind ?? null,
+      payload: payload as Record<string, unknown>,
+    })
+    .onConflictDoUpdate({
+      target: recipes.mealCanonical,
+      set: {
+        payload: payload as Record<string, unknown>,
+        kind: kind ?? null,
+        lastUsedAt: new Date(),
+      },
+    });
+}
+
+export async function bumpRecipeUsage(id: number) {
+  await db
+    .update(recipes)
+    .set({ usedCount: sql`${recipes.usedCount} + 1`, lastUsedAt: new Date() })
+    .where(eq(recipes.id, id));
 }
 
 // Updates an item's last-paid price. Pass null to clear.
