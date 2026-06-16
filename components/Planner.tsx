@@ -11,7 +11,7 @@ import {
   addItem, toggleItem, deleteItem, clearCheckedItems, updateItemCost,
   reassignItems, bulkDeleteItems,
   updateDinnerMeal, updateDinnerSlot, setDinnerSkip,
-  addExpense, deleteExpense, setCurrentWeek, closeOutWeek, clearLastWeek,
+  addExpense, deleteExpense, setCurrentWeek, closeOutWeek, clearLastWeek, clearWeek,
   getAllState, applyPlanChanges, rejectProposal, applyImportedRecipe,
   applyReceipt, cacheRecipe,
   getWeekPlan, saveWeekPlan, deleteWeekPlan,
@@ -118,6 +118,51 @@ async function shareText(text: string) {
     // no clipboard either — show the text so user can copy by hand
   }
   alert(text);
+}
+
+// Fun share-message templates for dinner pings between Knute + Kait.
+// Zillennial-tasteful, dry humor. Picked at random each tap so it stays
+// fresh instead of feeling auto-generated.
+const DINNER_SHARE_INTROS = [
+  "🔥 dinner alert:",
+  "tonight we ride:",
+  "menu drop —",
+  "incoming feast:",
+  "tonight's dish for the discerning Fossos:",
+  "what's cooking:",
+  "[urgent] dinner update:",
+  "🍽 vibes for tonight:",
+  "the menu has spoken —",
+  "tonight, by popular demand:",
+  "the rotation says:",
+  "ladies and gentleman, your dinner:",
+];
+const DINNER_SHARE_OUTROS = [
+  " RSVP yes.",
+  " come hungry 🥄",
+  " no notes.",
+  " thoughts? 👀",
+  "",
+  " love that for us.",
+  " peak Fosso behavior.",
+  " (this is not a drill)",
+  " (we move)",
+  " 🤝",
+];
+function pickRandom<T>(arr: readonly T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+function dinnerShareMessage(d: Dinner): string {
+  if (d.skip) {
+    return `tonight's a skip — ${d.skipReason || "no dinner needed"} 🤷`;
+  }
+  if (!d.meal || !d.meal.trim()) {
+    return "tonight's menu: TBD 👀";
+  }
+  const intro = pickRandom(DINNER_SHARE_INTROS);
+  const outro = pickRandom(DINNER_SHARE_OUTROS);
+  const noteLine = d.note ? `\n(${d.note})` : "";
+  return `${intro} ${d.meal}${noteLine}${outro}`.trim();
 }
 
 function recipeAsText(r: Recipe): string {
@@ -314,6 +359,17 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
     setHousehold((p) => ({ ...p, lastWeekTotal: null }));
     startTransition(() => clearLastWeek());
   }
+  async function doClearWeek() {
+    if (!confirm("Clear all dinners, shopping items, and expenses for THIS week? Cycle position stays the same. This can't be undone.")) return;
+    setDinners((p) => p.map((d) => ({ ...d, meal: "", note: "", skip: false, skipReason: "" })));
+    setItems([]);
+    setExpenses([]);
+    try {
+      await clearWeek();
+    } catch (e) {
+      console.error("Clear week failed:", e);
+    }
+  }
 
   // Recipe sheet (opened from the 📖 action on any dinner)
   const [recipeSheetState, setRecipeSheetState] = useState<{
@@ -504,6 +560,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
             <button onClick={() => { setSheet("ai"); setMenuOpen(false); }}><i className="ti ti-sparkles" /> Modify week</button>
             <button onClick={() => { setSheet("import"); setMenuOpen(false); }}><i className="ti ti-link" /> Import recipe</button>
             <button onClick={() => { setMenuOpen(false); doCloseWeek(); }}><i className="ti ti-calendar-stats" /> Close out week</button>
+            <button onClick={() => { setMenuOpen(false); doClearWeek(); }}><i className="ti ti-trash" /> Clear week</button>
           </div>
         )}
       </header>
@@ -609,9 +666,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
                 <button className="swap-btn" onClick={() => setTab("week")}>↺ Swap or skip</button>
                 <button
                   className="swap-btn"
-                  onClick={() => shareText(
-                    `Tonight: ${today.meal}${today.label ? ` (${today.label})` : ""}${today.note ? `\n${today.note}` : ""}`
-                  )}
+                  onClick={() => shareText(dinnerShareMessage(today))}
                   aria-label="Share tonight"
                 >💬 Share</button>
               </div>
@@ -2660,6 +2715,17 @@ function PlanShoppingPanel({
   const [includedStaples, setIncludedStaples] = useState<Record<string, boolean>>({});
   const [answeredQs, setAnsweredQs] = useState<Record<number, "yes" | "no">>({});
 
+  // Mirror of the anchor store inside the sheet — when changed, persist back
+  // to localStorage AND re-run plan_shopping so prices reflect the new store.
+  const [anchorInSheet, setAnchorInSheet] = useState<string>("");
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("fossofam-active-store");
+      if (saved && STORE[saved]) setAnchorInSheet(saved);
+      else setAnchorInSheet("fred");
+    } catch { setAnchorInSheet("fred"); }
+  }, []);
+
   function answerQuestion(idx: number, yes: boolean) {
     if (!result) return;
     if (yes) {
@@ -2677,9 +2743,10 @@ function PlanShoppingPanel({
     setAnsweredQs((p) => ({ ...p, [idx]: yes ? "yes" : "no" }));
   }
 
-  async function callAgent(note: string, dedupeAgainst: string[]) {
-    let anchorStore = "";
-    try { anchorStore = localStorage.getItem("fossofam-active-store") || ""; } catch {}
+  async function callAgent(note: string, dedupeAgainst: string[], anchorOverride?: string) {
+    const anchorStore = anchorOverride ?? anchorInSheet ?? (() => {
+      try { return localStorage.getItem("fossofam-active-store") || ""; } catch { return ""; }
+    })();
     // Treat staged-but-not-applied proposal items as already on the list so
     // append calls don't duplicate them.
     const augmentedItems = dedupeAgainst.length === 0 ? items : [
@@ -2715,12 +2782,12 @@ function PlanShoppingPanel({
   }
 
   // Re-run = full rebuild from scratch, replaces existing result.
-  async function runFresh(note: string, staples: string[]) {
+  async function runFresh(note: string, staples: string[], anchorOverride?: string) {
     setLoading(true);
     setError(null);
     setAnsweredQs({});
     try {
-      const { proposal, proposalId: pid } = await callAgent(buildNote(note, staples), []);
+      const { proposal, proposalId: pid } = await callAgent(buildNote(note, staples), [], anchorOverride);
       setResult(proposal);
       setProposalId(pid);
       const k: Record<number, boolean> = {};
@@ -2797,6 +2864,21 @@ function PlanShoppingPanel({
     setIncludedStaples((p) => ({ ...p, [s]: !p[s] }));
   }
 
+  function changeAnchor(key: string) {
+    if (!STORE[key] || key === anchorInSheet) return;
+    setAnchorInSheet(key);
+    // Persist for the rest of the app (the anchor picker on Shopping tab
+    // reads this) AND mark as user-picked so it sticks.
+    try {
+      localStorage.setItem("fossofam-active-store", key);
+      localStorage.setItem("fossofam-active-store-user-picked", "1");
+    } catch {}
+    // Re-run from scratch — prices need to reflect the new store's tier.
+    // Pass the new key explicitly since React state hasn't propagated yet.
+    const staples = Object.entries(includedStaples).filter(([, v]) => v).map(([k]) => k);
+    runFresh(refineNote, staples, key);
+  }
+
   function apply() {
     if (!result) return;
     const additions = result.shopping_additions.filter((_, i) => keep[i]);
@@ -2814,6 +2896,27 @@ function PlanShoppingPanel({
   return (
     <div>
       <h2 className="sheet-h2">Stock the week</h2>
+
+      {/* Anchor picker — change it here to re-estimate prices at the new
+          store's tier (Grocery Outlet cheaper, Sprouts pricier, etc.). */}
+      <div className="anchor-bar" style={{ marginTop: 0 }}>
+        <span className="ab-label">For</span>
+        <div className="ab-select-wrap">
+          <select
+            className="ab-select"
+            value={anchorInSheet || "fred"}
+            onChange={(e) => changeAnchor(e.target.value)}
+            disabled={loading}
+          >
+            {STORE_ORDER.filter((k) => k !== "online").map((k) => (
+              <option key={k} value={k}>{STORE[k].name}</option>
+            ))}
+          </select>
+        </div>
+        <span className="ab-count" style={{ fontSize: 12 }}>
+          changing store re-estimates
+        </span>
+      </div>
 
       {/* Refinement: free-text note + staples toggles. Lets the family
           send constraints to the agent ("pasture-raised only", "use the

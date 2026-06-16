@@ -270,6 +270,18 @@ export async function clearLastWeek() {
   revalidatePath("/");
 }
 
+// Wipe the current week without advancing the cycle: empties dinner meals,
+// clears the shopping list, clears expenses. Does NOT touch lastWeekTotal,
+// household.currentWeek, weekPlans (future weeks), or recipes (cached).
+// Use for "start this week over" — different from closeOutWeek which rolls
+// forward.
+export async function clearWeek() {
+  await db.update(dinners).set({ meal: "", note: "", skip: false, skipReason: "" });
+  await db.delete(items);
+  await db.delete(expenses);
+  revalidatePath("/");
+}
+
 // ---- Week plans (future-week storage) ----
 export async function getWeekPlan(weekStart: string) {
   const rows = await db.select().from(weekPlans).where(eq(weekPlans.weekStart, weekStart)).limit(1);

@@ -235,7 +235,39 @@ For each non-skipped, non-blank dinner above, list everything the family needs t
 
 ORGANIC DEFAULT: Every shopping_addition name MUST be prefixed with 'Organic' when applicable — produce, meat, poultry, fish, dairy, eggs, and most pantry items. Examples: 'Organic ground beef', 'Organic honeycrisp apples', 'Organic kale', 'Organic chicken breast', 'Organic salmon'. Only skip the 'Organic' prefix when (a) it's a specific non-organic brand the family already buys (Goodles mac & cheese, Tillamook block cheese — they're already premium), or (b) the item genuinely isn't sold organic. When in doubt, prefix Organic.
 
-For est_cost: ground in any 'last paid' prices above when an analogous item exists, otherwise estimate from typical PNW grocery prices at the ORGANIC price point. Sum your est_costs into estimated_weekly_cost (round to whole dollars). Compare against the $215 target → budget_status. If over: propose a scrounge_suggestion day swap in the family's voice.
+For est_cost: BE REALISTIC, not optimistic. This is Pacific Northwest 2025-2026 ORGANIC pricing at the routed store. Anchor 2025 organic PNW baselines (use these — most family-priced suggestions UNDERSHOOT and the budget chip then lies):
+- Organic ground beef: $9-11/lb
+- Organic chuck roast: $11-14/lb
+- Organic chicken breast: $9-12/lb
+- Organic chicken thighs: $7-9/lb
+- Organic bacon: $9-12/pkg
+- Salmon (wild PNW): $14-22/lb
+- Organic apples (honeycrisp): $3-4/lb (bag = $7-9)
+- Organic bananas: $0.79/lb ($2-3 a bunch)
+- Organic kale / greens: $4-5/bunch
+- Organic potatoes: $5-7/bag
+- Organic onions: $3-5/bag
+- Organic milk (half gallon): $5-7
+- Organic eggs (dozen): $7-9
+- GF bread / wraps: $7-9/loaf
+- GF pasta: $4-6
+- Tortilla chips (organic): $5-7
+- Refried beans (good quality, organic): $3-5/can
+- Shredded cheese (organic): $6-8
+
+Then adjust for the routed store:
+- grocout (Grocery Outlet): inconsistent stock, but when found roughly 25-35% UNDER the baselines above
+- fred (Fred Meyer): use the baselines (organic is mid-shelf there)
+- target: similar to Fred Meyer, baseline pricing
+- sprouts: ORGANIC SPECIALTY — +10-20% over baselines
+- coop: organic + raw — +10-20% over baselines
+- costco: bulk packaging — lower PER-UNIT but quantities are larger, so the line item is bigger
+- coastal: feed only (not food)
+- tj: flowers / event items only
+
+If 'last paid' exists in the cart above for a similar item, anchor on that price first.
+
+Sum est_costs → estimated_weekly_cost (round to whole dollars). Compare to $215 → budget_status. If over: propose a scrounge_suggestion day swap.
 
 NO LONG NOTES. Don't write paragraphs of conditional reasoning like "(1) chili powder — if running low, otherwise skip…". Instead, surface those as short yes/no questions[] (≤4) that directly control which items get unchecked. The notes field is reserved for caveats you can't ask about, max 1 sentence.`;
   }
