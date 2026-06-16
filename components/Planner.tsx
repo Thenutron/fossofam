@@ -118,6 +118,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [activeRow, setActiveRow] = useState<number | null>(null);
   const [staplesOpen, setStaplesOpen] = useState(false);
+  const [weekDetail, setWeekDetail] = useState<{ open: boolean; offset: number }>({ open: false, offset: 0 });
 
   // Live two-phone sync — refetch on focus + every 20s while visible.
   const isPendingRef = useRef(false);
@@ -333,7 +334,28 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         )}
       </header>
 
-      <WeekCarousel currentCyclePos={currentWeek} />
+      <WeekCarousel
+        currentCyclePos={currentWeek}
+        onSelect={(offset) => setWeekDetail({ open: true, offset })}
+      />
+
+      {weekDetail.open && (() => {
+        const start = sundayOfWeek(new Date(), weekDetail.offset);
+        const cyclePos = cyclePosFor(currentWeek, weekDetail.offset);
+        const meta = WEEKS.find((w) => w.n === cyclePos) ?? WEEKS[0];
+        return (
+          <SheetOverlay onClose={() => setWeekDetail({ open: false, offset: 0 })}>
+            <WeekDetailSheet
+              weekStart={start}
+              cyclePos={cyclePos}
+              meta={meta}
+              dinners={dinners}
+              isCurrent={weekDetail.offset === 0}
+              onClose={() => setWeekDetail({ open: false, offset: 0 })}
+            />
+          </SheetOverlay>
+        );
+      })()}
 
       {/* ============ TONIGHT + TOMORROW ============ */}
       <section className="card">
@@ -342,6 +364,26 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         <div className="dash-card-head" style={{ marginTop: 18 }}><i className="ti ti-calendar" /><h2 style={{ fontSize: 16 }}>Tomorrow · {tomorrowName}</h2></div>
         <DinnerSpotlight d={tomorrow} prominent={false} onSkip={(d) => toggleRowMenu(d.id, "skip")} onUnskip={() => doSkip(tomorrow.id, false, "")} getRecipe={getRecipe} />
       </section>
+
+      {/* Surface the dinner→shopping gap. If we've got dinners planned but
+          the shopping list is empty (or much smaller than the dinner count),
+          show a banner with the one-tap Stock list trigger. Easy to dismiss
+          but hard to miss on first load. */}
+      {(() => {
+        const realDinners = dinners.filter((d) => !d.skip && d.meal && d.meal.trim().length > 0);
+        const shoppingItems = items.filter((i) => !i.done);
+        const gap = realDinners.length >= 3 && shoppingItems.length < realDinners.length;
+        if (!gap) return null;
+        return (
+          <div className="stock-nudge" onClick={() => setSheet("stock")}>
+            <div className="sn-text">
+              <strong>You have {realDinners.length} dinners planned but only {shoppingItems.length} items on the list.</strong>
+              <div className="sn-sub">Tap to auto-build the week&apos;s shopping from your meals.</div>
+            </div>
+            <span className="sn-cta">🛒 Stock it</span>
+          </div>
+        );
+      })()}
 
       {/* ============ THIS WEEK ============ */}
       <section className="card">
@@ -620,7 +662,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
 // where the user is in the 1→2→3 cycle (normal / feed / bulk), the budget
 // for that week, and a one-liner note. Tapping cards is a no-op for now —
 // purely informational so the family can see what's coming.
-function WeekCarousel({ currentCyclePos }: { currentCyclePos: number }) {
+function WeekCarousel({ currentCyclePos, onSelect }: { currentCyclePos: number; onSelect: (offset: number) => void }) {
   const now = new Date();
   const cards = Array.from({ length: 5 }, (_, offset) => {
     const start = sundayOfWeek(now, offset);
@@ -637,14 +679,88 @@ function WeekCarousel({ currentCyclePos }: { currentCyclePos: number }) {
   return (
     <div className="week-carousel" aria-label="Upcoming weeks">
       {cards.map((c) => (
-        <div key={c.offset} className={"wc-card" + (c.offset === 0 ? " wc-current" : "")}>
+        <button
+          key={c.offset}
+          className={"wc-card" + (c.offset === 0 ? " wc-current" : "")}
+          onClick={() => onSelect(c.offset)}
+        >
           <div className="wc-label">{c.heading}</div>
           <div className="wc-dates">{weekRangeLabel(c.start)}</div>
           <div className={"wc-tag " + c.tagClass}>{c.tagLabel}</div>
           <div className="wc-budget">{c.meta.budget}</div>
           <div className="wc-desc">{c.meta.desc}</div>
-        </div>
+        </button>
       ))}
+    </div>
+  );
+}
+
+/* ---------- Week detail sheet ---------- */
+function WeekDetailSheet({
+  weekStart, cyclePos, meta, dinners, isCurrent, onClose,
+}: {
+  weekStart: Date;
+  cyclePos: number;
+  meta: typeof WEEKS[number];
+  dinners: Dinner[];
+  isCurrent: boolean;
+  onClose: () => void;
+}) {
+  const tagLabel = cyclePos === 3 ? "Bulk week" : cyclePos === 2 ? "Feed week" : "Normal week";
+  return (
+    <div>
+      <h2 className="sheet-h2">{weekRangeLabel(weekStart)}</h2>
+      <div className="receipt-summary">
+        <div className="rs-block">
+          <div className="rs-label">Cycle</div>
+          <div className="rs-val" style={{ fontSize: 17 }}>{tagLabel}</div>
+        </div>
+        <div className="rs-block">
+          <div className="rs-label">Budget</div>
+          <div className="rs-val" style={{ fontSize: 17 }}>{meta.budget}</div>
+        </div>
+      </div>
+
+      <div className="note" style={{ marginBottom: 12 }}>{meta.desc}</div>
+
+      {meta.tags && meta.tags.length > 0 && (
+        <div className="ideas" style={{ marginBottom: 14 }}>
+          {meta.tags.map((t, i) => (
+            <span key={i} className="idea-chip" style={{ cursor: "default" }}>{t[1]}</span>
+          ))}
+        </div>
+      )}
+
+      <div className="sheet-h3">Dinners</div>
+      {!isCurrent && (
+        <div className="note" style={{ marginTop: 4, marginBottom: 8 }}>
+          Per-week plans are coming. For now this shows your standing 7-day rotation projected forward.
+        </div>
+      )}
+
+      {DAY_NAMES.map((day, i) => {
+        const d = dinners.find((x) => x.day === day);
+        const date = new Date(weekStart);
+        date.setDate(weekStart.getDate() + i);
+        const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        return (
+          <div key={day} style={{ padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+              <span className="day-name" style={{ fontSize: 14 }}>{day}</span>
+              <span className="day-date">· {dateLabel}</span>
+              <span style={{ flex: 1 }} />
+              {d && !d.skip && <span className={"day-tag t-" + d.tag}>{d.label}</span>}
+              {d?.skip && <span className="day-tag t-skip">Skipped</span>}
+            </div>
+            <div style={{ fontSize: 15 }}>{d?.skip ? (d.skipReason || "No dinner needed") : (d?.meal || "—")}</div>
+            {d?.note && !d.skip && <div className="gf-mini">{d.note}</div>}
+          </div>
+        );
+      })}
+
+      <div className="toolbar" style={{ marginTop: 16 }}>
+        <button className="btn-ghost" onClick={onClose}>Close</button>
+      </div>
     </div>
   );
 }

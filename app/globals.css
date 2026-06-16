@@ -260,6 +260,26 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
     background: var(--coral-bg); color: var(--coral-ink);
     border-color: transparent; font-weight: 600;
   }
+
+  /* "you have 7 dinners but 0 items" nudge — shown only when there's a gap */
+  .stock-nudge {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--coral-bg); color: var(--coral-ink);
+    border-radius: 14px; padding: 14px 16px;
+    margin-bottom: 14px; cursor: pointer;
+    border: 1px solid transparent;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .stock-nudge:hover { border-color: var(--coral); }
+  .stock-nudge:active { transform: scale(0.99); }
+  .sn-text { flex: 1; font-size: 13.5px; line-height: 1.4; }
+  .sn-text strong { font-weight: 700; }
+  .sn-sub { opacity: 0.8; margin-top: 2px; font-size: 12.5px; }
+  .sn-cta {
+    background: var(--coral); color: #fff; font-weight: 700;
+    font-size: 14px; padding: 10px 14px; border-radius: 999px;
+    white-space: nowrap; flex-shrink: 0;
+  }
   .shop-mode-btn:hover { color: var(--ink); border-color: var(--ink-3); }
   .shop-mode-btn.on {
     background: var(--teal-bg); color: var(--teal-ink);
@@ -602,11 +622,18 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
     background: var(--surface); border: 1px solid var(--line);
     border-radius: 14px; padding: 14px 16px;
     scroll-snap-align: start;
+    appearance: none; cursor: pointer; text-align: left;
+    font-family: var(--font); color: inherit;
+    transition: border-color .15s, transform .1s;
+    -webkit-tap-highlight-color: transparent;
   }
+  .wc-card:hover { border-color: var(--ink-3); }
+  .wc-card:active { transform: scale(0.98); }
   .wc-card.wc-current {
     border: 2px solid var(--coral);
     padding: 13px 15px;
   }
+  .wc-card.wc-current:hover { border-color: var(--coral); }
   .wc-label {
     font-size: 11px; font-weight: 700; color: var(--ink-3);
     text-transform: uppercase; letter-spacing: 0.5px;
