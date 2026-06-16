@@ -180,10 +180,17 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   function doAddItem(name: string, store: string) {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const s = store === "auto" ? routeStore(trimmed) : store;
-    const temp: Item = { id: Date.now(), name: trimmed, store: s, done: false, cost: null, costAt: null, createdAt: new Date() };
+    let anchor = "";
+    try { anchor = localStorage.getItem("fossofam-active-store") || ""; } catch {}
+    // Anchor-aware routing for "auto" adds. Specialty matches still pin to
+    // their stores (raw milk → coop, feed → coastal, mold-free coffee →
+    // sprouts) — only otherwise-unmatched items follow the anchor. Resolve
+    // the final store client-side and persist it directly so server +
+    // client stay consistent.
+    const finalStore = store === "auto" ? routeStore(trimmed, anchor) : store;
+    const temp: Item = { id: Date.now(), name: trimmed, store: finalStore, done: false, cost: null, costAt: null, createdAt: new Date() };
     setItems((p) => [...p, temp]);
-    startTransition(() => addItem(trimmed, store));
+    startTransition(() => addItem(trimmed, finalStore));
   }
   function doToggle(id: number, done: boolean) {
     setItems((p) => p.map((i) => (i.id === id ? { ...i, done } : i)));

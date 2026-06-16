@@ -62,9 +62,13 @@ const ROUTE: [RegExp, string][] = [
   [/glass|online|order/i, "online"],
 ];
 
-export function routeStore(name: string): string {
+// Specialty matches (raw milk, mold-free coffee, chicken feed, etc.) always
+// win. For unmatched items, prefer the family's anchor store if one is
+// passed in — that way picking "Grocery Outlet" as the anchor routes the
+// rest of the week's needs there instead of always defaulting to Fred Meyer.
+export function routeStore(name: string, anchorStore?: string): string {
   for (const [re, s] of ROUTE) if (re.test(name)) return s;
-  return "fred";
+  return anchorStore && anchorStore !== "online" ? anchorStore : "fred";
 }
 
 // ---- Aisle / area routing ----
