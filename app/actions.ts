@@ -201,10 +201,24 @@ export async function setCurrentWeek(week: number) {
   revalidatePath("/");
 }
 
+// Sunday of the calendar week AFTER today (server-side). Used to look up
+// the next week's saved plan when the cycle rolls.
+function nextSundayKey(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  const dow = d.getDay();
+  d.setDate(d.getDate() + (7 - dow));
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export async function closeOutWeek() {
   // snapshot weekly (non-bulk) total into lastWeekTotal, clear expenses,
-  // un-skip days, AND advance the 1→2→3→1 cycle so the carousel + budget
-  // reflect the new week's cadence (feed-week / bulk-week / normal).
+  // un-skip days, advance the 1→2→3→1 cycle, AND promote any saved plan
+  // for next week into the live dinners table so the family's planning
+  // ahead actually activates when the week becomes current.
   const exp = await db.select().from(expenses);
   const weekly = exp.filter((e) => e.kind !== "bulk").reduce((s, e) => s + e.amount, 0);
   const [hh] = await db.select().from(household).where(eq(household.id, 1));
@@ -216,6 +230,38 @@ export async function closeOutWeek() {
     .where(eq(household.id, 1));
   await db.delete(expenses);
   await db.update(dinners).set({ skip: false, skipReason: "" });
+
+  // Promote next week's saved plan (if any) into the live rotation.
+  try {
+    const nextKey = nextSundayKey();
+    const [nextPlan] = await db
+      .select()
+      .from(weekPlans)
+      .where(eq(weekPlans.weekStart, nextKey))
+      .limit(1);
+    if (nextPlan) {
+      const planDinners = nextPlan.dinners as WeekPlanDinner[];
+      for (const pd of planDinners) {
+        if (!pd?.day) continue;
+        await db
+          .update(dinners)
+          .set({
+            meal: pd.meal ?? "",
+            tag: pd.tag ?? "cook",
+            label: pd.label ?? "Real cook",
+            note: pd.note ?? "",
+            skip: !!pd.skip,
+            skipReason: pd.skipReason ?? "",
+          })
+          .where(eq(dinners.day, pd.day));
+      }
+      // Plan is consumed — it's now the active rotation.
+      await db.delete(weekPlans).where(eq(weekPlans.weekStart, nextKey));
+    }
+  } catch (e) {
+    console.error("Failed to promote week plan on close-out:", e);
+  }
+
   revalidatePath("/");
 }
 

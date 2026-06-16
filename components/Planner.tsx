@@ -231,7 +231,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
     setExpenses((p) => p.filter((e) => e.id !== id));
     startTransition(() => deleteExpense(id));
   }
-  function doCloseWeek() {
+  async function doCloseWeek() {
     const weekly = expenses.filter((e) => e.kind !== "bulk").reduce((s, e) => s + e.amount, 0);
     if (weekly === 0 && !confirm("No weekly expenses logged yet. Close out anyway?")) return;
     if (!confirm(`Snapshot this week's $${Math.round(weekly)} as last week and roll the cycle to the next week?`)) return;
@@ -242,7 +242,19 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
     }));
     setExpenses([]);
     setDinners((p) => p.map((d) => ({ ...d, skip: false, skipReason: "" })));
-    startTransition(() => closeOutWeek());
+    try {
+      await closeOutWeek();
+      // Refresh — if a saved plan existed for next week, it was just
+      // promoted into the live dinners table. Pull fresh state so the
+      // new rotation shows up without waiting for the 20s poll.
+      const s = await getAllState();
+      setItems(s.items);
+      setDinners(s.dinners);
+      setExpenses(s.expenses);
+      setHousehold(s.household);
+    } catch (e) {
+      console.error("Close-out failed:", e);
+    }
   }
   function doClearLastWeek() {
     setHousehold((p) => ({ ...p, lastWeekTotal: null }));
