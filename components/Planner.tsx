@@ -115,10 +115,24 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   // UI surface state
   const [sheet, setSheet] = useState<"ai" | "import" | "stock" | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [budgetOpen, setBudgetOpen] = useState(false);
   const [activeRow, setActiveRow] = useState<number | null>(null);
   const [staplesOpen, setStaplesOpen] = useState(false);
   const [weekDetail, setWeekDetail] = useState<{ open: boolean; offset: number }>({ open: false, offset: 0 });
+
+  // Top-level navigation — splits the single page into focused views so
+  // it doesn't all stack at once. Persisted across reloads so wherever you
+  // were is wherever you come back to.
+  type TabKey = "tonight" | "week" | "shopping" | "budget";
+  const [tab, setTab] = useState<TabKey>("tonight");
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("fossofam-tab");
+      if (saved === "tonight" || saved === "week" || saved === "shopping" || saved === "budget") setTab(saved);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem("fossofam-tab", tab); } catch {}
+  }, [tab]);
 
   // Live two-phone sync — refetch on focus + every 20s while visible.
   const isPendingRef = useRef(false);
@@ -337,10 +351,19 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         )}
       </header>
 
-      <WeekCarousel
-        currentCyclePos={currentWeek}
-        onSelect={(offset) => setWeekDetail({ open: true, offset })}
-      />
+      <nav className="tab-nav" aria-label="Sections">
+        <button className={tab === "tonight" ? "active" : ""} onClick={() => setTab("tonight")}>🔥 Tonight</button>
+        <button className={tab === "week" ? "active" : ""} onClick={() => setTab("week")}>📅 Week</button>
+        <button className={tab === "shopping" ? "active" : ""} onClick={() => setTab("shopping")}>🛒 Shopping</button>
+        <button className={tab === "budget" ? "active" : ""} onClick={() => setTab("budget")}>💰 Budget</button>
+      </nav>
+
+      {(tab === "tonight" || tab === "week") && (
+        <WeekCarousel
+          currentCyclePos={currentWeek}
+          onSelect={(offset) => setWeekDetail({ open: true, offset })}
+        />
+      )}
 
       {weekDetail.open && (() => {
         const start = sundayOfWeek(new Date(), weekDetail.offset);
@@ -360,19 +383,9 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         );
       })()}
 
-      {/* ============ TONIGHT + TOMORROW ============ */}
-      <section className="card">
-        <div className="dash-card-head"><i className="ti ti-flame" /><h2>Tonight · {todayName}</h2></div>
-        <DinnerSpotlight d={today} prominent onSkip={(d) => toggleRowMenu(d.id, "skip")} onUnskip={() => doSkip(today.id, false, "")} getRecipe={getRecipe} />
-        <div className="dash-card-head" style={{ marginTop: 18 }}><i className="ti ti-calendar" /><h2 style={{ fontSize: 16 }}>Tomorrow · {tomorrowName}</h2></div>
-        <DinnerSpotlight d={tomorrow} prominent={false} onSkip={(d) => toggleRowMenu(d.id, "skip")} onUnskip={() => doSkip(tomorrow.id, false, "")} getRecipe={getRecipe} />
-      </section>
-
-      {/* Surface the dinner→shopping gap. If we've got dinners planned but
-          the shopping list is empty (or much smaller than the dinner count),
-          show a banner with the one-tap Stock list trigger. Easy to dismiss
-          but hard to miss on first load. */}
-      {(() => {
+      {/* The dinner→shopping gap nudge. Shown on Tonight + Shopping tabs so
+          it's hard to miss either when landing or when you're about to shop. */}
+      {(tab === "tonight" || tab === "shopping") && (() => {
         const realDinners = dinners.filter((d) => !d.skip && d.meal && d.meal.trim().length > 0);
         const shoppingItems = items.filter((i) => !i.done);
         const gap = realDinners.length >= 3 && shoppingItems.length < realDinners.length;
@@ -388,8 +401,19 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         );
       })()}
 
+      {/* ============ TONIGHT + TOMORROW ============ */}
+      {tab === "tonight" && (
+        <section className="card">
+          <div className="dash-card-head"><i className="ti ti-flame" /><h2>Tonight · {todayName}</h2></div>
+          <DinnerSpotlight d={today} prominent onSkip={(d) => toggleRowMenu(d.id, "skip")} onUnskip={() => doSkip(today.id, false, "")} getRecipe={getRecipe} />
+          <div className="dash-card-head" style={{ marginTop: 18 }}><i className="ti ti-calendar" /><h2 style={{ fontSize: 16 }}>Tomorrow · {tomorrowName}</h2></div>
+          <DinnerSpotlight d={tomorrow} prominent={false} onSkip={(d) => toggleRowMenu(d.id, "skip")} onUnskip={() => doSkip(tomorrow.id, false, "")} getRecipe={getRecipe} />
+        </section>
+      )}
+
       {/* ============ THIS WEEK ============ */}
-      <section className="card">
+      {tab === "week" && (
+        <section className="card">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
           <h2>Week of {weekOfLabel()}</h2>
           <button className="stock-btn" onClick={() => setSheet("stock")}>🛒 Stock list</button>
@@ -478,8 +502,10 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
           })}
         </div>
       </section>
+      )}
 
       {/* ============ SHOPPING ============ */}
+      {tab === "shopping" && (
       <ShoppingSection
         items={items}
         active={active}
@@ -530,16 +556,20 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         staplesOpen={staplesOpen}
         setStaplesOpen={setStaplesOpen}
       />
+      )}
 
-      {/* ============ BUDGET STRIP ============ */}
-      <div className="budget-strip" onClick={() => setBudgetOpen((v) => !v)}>
-        <span style={{ fontWeight: 600, color: "var(--ink)" }}>${Math.round(weeklySpent)}</span>
-        <span style={{ color: "var(--ink-3)" }}>of ${WEEKLY_TARGET}</span>
-        <span style={{ color: "var(--ink-3)" }}>·</span>
-        <span className={over ? "over" : "ok"}>{over ? `$${Math.abs(Math.round(remain))} over` : `$${Math.round(remain)} left`}</span>
-        <span className="caret">{budgetOpen ? "▾" : "▸"}</span>
-      </div>
-      {budgetOpen && (
+      {/* Budget strip — at-a-glance on every non-budget tab. Tap → switches
+          to the Budget tab. Keeps spend visible without taking up tab space. */}
+      {tab !== "budget" && (
+        <div className="budget-strip" onClick={() => setTab("budget")}>
+          <span style={{ fontWeight: 600, color: "var(--ink)" }}>${Math.round(weeklySpent)}</span>
+          <span style={{ color: "var(--ink-3)" }}>of ${WEEKLY_TARGET}</span>
+          <span style={{ color: "var(--ink-3)" }}>·</span>
+          <span className={over ? "over" : "ok"}>{over ? `$${Math.abs(Math.round(remain))} over` : `$${Math.round(remain)} left`}</span>
+          <span className="caret">›</span>
+        </div>
+      )}
+      {tab === "budget" && (
         <BudgetSection
           expenses={expenses}
           weeklySpent={weeklySpent}
