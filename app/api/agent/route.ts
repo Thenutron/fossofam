@@ -176,6 +176,8 @@ Extract the actual recipe from the page text above. Ignore the blog narrative, a
   }
   if (req.tool === "suggest_meal") {
     const dinners = req.dinners ?? [];
+    const items = req.items ?? [];
+    const pricedItems = items.filter((i) => i.cost != null && i.cost > 0);
     return `# Request
 Day: ${req.day || "(any)"}
 Effort tier: ${req.kind || "dinner"}
@@ -183,10 +185,13 @@ Effort tier: ${req.kind || "dinner"}
 # Current week's rotation (DO NOT propose duplicates of these)
 ${dinners.map((d) => `- ${d.day}: ${d.meal}${d.tag ? " [" + d.tag + "]" : ""}`).join("\n")}
 
+# Historical item prices (use to ground est_cost when relevant)
+${pricedItems.length === 0 ? "(no priced history yet)" : pricedItems.map((i) => `- ${i.name}: $${i.cost!.toFixed(2)}`).join("\n")}
+
 # Family note
 ${req.note?.trim() || "(none)"}
 
-Return ONE specific meal idea via suggest_meal. It must match the requested effort tier exactly.`;
+Return ONE specific meal idea via suggest_meal with an honest est_cost.`;
   }
   if (req.tool === "modify_recipe") {
     const current = req.currentRecipe ?? {};

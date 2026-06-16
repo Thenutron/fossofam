@@ -386,8 +386,12 @@ const modifyRecipeTool: AgentTool = {
         type: "string",
         description: "1-2 sentences in family tone — what you changed and why. Be terse and useful.",
       },
+      est_cost_delta: {
+        type: "number",
+        description: "Approximate change in cost in dollars from the original recipe. Negative = cheaper (savings), positive = more expensive, 0 = roughly the same. Use any historical 'last paid' prices the family has shared to ground this.",
+      },
     },
-    required: ["title", "servings", "prep_time", "cook_time", "ingredients", "steps", "tips", "when_to_start", "change_summary"],
+    required: ["title", "servings", "prep_time", "cook_time", "ingredients", "steps", "tips", "when_to_start", "change_summary", "est_cost_delta"],
     additionalProperties: false,
   },
 };
@@ -399,28 +403,20 @@ const modifyRecipeTool: AgentTool = {
 const suggestMealTool: AgentTool = {
   name: "suggest_meal",
   description:
-    "Generate exactly ONE fresh meal idea for a specific day + effort tier. Respect dietary constraints (GF household, sometimes DF). Honor per-person preferences (Kait + Revs no shellfish; Knute + Havyn all seafood; Knute high-protein; Kait lots of greens). Don't repeat anything already in the week's rotation. Be specific — 'salmon + roasted potatoes' beats 'fish'. Match the effort tier exactly: lazy = under 5min prep, cook = real cook night, crock = set-and-forget.",
+    "Generate exactly ONE fresh meal idea for a specific day + effort tier. Respect dietary constraints (GF household, sometimes DF). Honor per-person preferences (Kait + Revs no shellfish; Knute + Havyn all seafood; Knute high-protein; Kait lots of greens). Don't repeat anything already in the week's rotation. Be specific — 'salmon + roasted potatoes' beats 'fish'. Match the effort tier exactly: lazy = under 5min prep, cook = real cook night, crock = set-and-forget. Estimate the per-meal cost so the family sees budget impact at a glance.",
   input_schema: {
     type: "object",
     properties: {
-      meal: {
-        type: "string",
-        description: "Concise meal name, phone-glanceable.",
-      },
-      label: {
-        type: "string",
-        description: "Short tag label that fits the requested tier (e.g. 'Lazy', 'Real cook', 'Crock pot').",
-      },
-      note: {
-        type: "string",
-        description: "Optional 1-line context (cooking tip, leftover hint, GF brand). Empty string if none.",
-      },
-      reason: {
-        type: "string",
-        description: "1 sentence in family tone — why this idea fits this day. Terse.",
+      meal: { type: "string", description: "Concise meal name, phone-glanceable." },
+      label: { type: "string", description: "Short tag label that fits the requested tier (e.g. 'Lazy', 'Real cook', 'Crock pot')." },
+      note: { type: "string", description: "Optional 1-line context (cooking tip, leftover hint, GF brand). Empty string if none." },
+      reason: { type: "string", description: "1 sentence in family tone — why this idea fits this day. Terse." },
+      est_cost: {
+        type: "number",
+        description: "Best-effort estimated cost of this meal in dollars (groceries needed, sized for the family). Ground in any 'last paid' prices from the cart context when available, otherwise PNW grocery pricing. Round to whole dollars.",
       },
     },
-    required: ["meal", "label", "note", "reason"],
+    required: ["meal", "label", "note", "reason", "est_cost"],
     additionalProperties: false,
   },
 };
@@ -484,6 +480,7 @@ export type SuggestMealProposal = {
   label: string;
   note: string;
   reason: string;
+  est_cost: number;
 };
 
 export type ModifyRecipeProposal = {
@@ -496,6 +493,7 @@ export type ModifyRecipeProposal = {
   tips: string[];
   when_to_start: string;
   change_summary: string;
+  est_cost_delta: number;
 };
 
 export type PlanShoppingProposal = {

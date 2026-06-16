@@ -357,6 +357,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
     label?: string;
     note?: string;
     reason?: string;
+    est_cost?: number;
   } | null>(null);
 
   async function fetchAiIdea(d: Dinner) {
@@ -371,6 +372,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
           day: d.day,
           kind: d.tag,
           dinners,
+          items,
         }),
       });
       const data = await res.json();
@@ -383,6 +385,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         label: data.proposal.label,
         note: data.proposal.note,
         reason: data.proposal.reason,
+        est_cost: data.proposal.est_cost,
       });
     } catch (e) {
       setAiSwap({
@@ -511,6 +514,26 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
       {/* ============ TONIGHT ============ */}
       {tab === "tonight" && (
         <section className="card tonight-card">
+          {/* Projected-week chip: spent + sum of priced items in cart, vs
+              $215. Updates automatically as you log expenses, enter prices
+              in shop mode, or scan receipts. */}
+          {(() => {
+            const inCartKnown = items.reduce((s, i) => (!i.done && i.cost ? s + i.cost : s), 0);
+            const projected = weeklySpent + inCartKnown;
+            const remaining = WEEKLY_TARGET - projected;
+            const status = remaining < -15 ? "over" : remaining > 15 ? "under" : "at";
+            const unpriced = items.filter((i) => !i.done && (i.cost == null || i.cost === 0)).length;
+            return (
+              <div className={"tonight-budget-chip " + status}>
+                <strong>${Math.round(projected)}</strong> projected
+                <span className="tbc-sep">·</span>
+                {status === "over" ? <span className="tbc-over">${Math.abs(Math.round(remaining))} over</span>
+                  : status === "under" ? <span className="tbc-ok">${Math.round(remaining)} under</span>
+                  : <span className="tbc-at">on target</span>}
+                {unpriced > 0 && <span className="tbc-foot">{unpriced} unpriced</span>}
+              </div>
+            );
+          })()}
           <div className="dash-card-head"><i className="ti ti-flame" /><h2>Tonight · {todayName}</h2></div>
           {today.skip ? (
             <div>
@@ -625,7 +648,12 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
                       <div className="row-sub-label">✨ AI</div>
                       {aiSwap?.dinnerId === d.id && aiSwap.meal ? (
                         <div className="ai-suggestion">
-                          <div className="ai-meal">{aiSwap.meal}</div>
+                          <div className="ai-meal">
+                            {aiSwap.meal}
+                            {!!aiSwap.est_cost && aiSwap.est_cost > 0 && (
+                              <span className="ai-cost">~${Math.round(aiSwap.est_cost)}</span>
+                            )}
+                          </div>
                           {aiSwap.reason && <div className="ai-reason">{aiSwap.reason}</div>}
                           {aiSwap.note && <div className="gf-mini" style={{ marginTop: 4 }}>{aiSwap.note}</div>}
                           <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
@@ -1869,7 +1897,7 @@ function InlineRecipe({
   onRegenerate: () => void;
   onClose: () => void;
 }) {
-  const [override, setOverride] = useState<(Recipe & { change_summary?: string }) | null>(null);
+  const [override, setOverride] = useState<(Recipe & { change_summary?: string; est_cost_delta?: number }) | null>(null);
   const [modifyInput, setModifyInput] = useState("");
   const [modifyLoading, setModifyLoading] = useState(false);
   const [modifyError, setModifyError] = useState<string | null>(null);
@@ -1924,7 +1952,16 @@ function InlineRecipe({
       {override?.change_summary && (
         <div className="last-week-banner good" style={{ marginBottom: 12 }}>
           <i className="ti ti-edit" />
-          <div><strong>Changed:</strong> {override.change_summary}</div>
+          <div>
+            <strong>Changed:</strong> {override.change_summary}
+            {!!override.est_cost_delta && Math.abs(override.est_cost_delta) >= 1 && (
+              <span className="cost-delta">
+                {override.est_cost_delta > 0
+                  ? `↑ ~$${Math.round(override.est_cost_delta)} more`
+                  : `↓ saves ~$${Math.abs(Math.round(override.est_cost_delta))}`}
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -2026,7 +2063,7 @@ function RecipeSheet({
   // Local override — when user runs modify_recipe, we replace the displayed
   // recipe with the modified version. The cached payload stays untouched
   // (substitution is per-cook, not a permanent edit).
-  const [override, setOverride] = useState<(Recipe & { change_summary?: string }) | null>(null);
+  const [override, setOverride] = useState<(Recipe & { change_summary?: string; est_cost_delta?: number }) | null>(null);
   const [modifyInput, setModifyInput] = useState("");
   const [modifyLoading, setModifyLoading] = useState(false);
   const [modifyError, setModifyError] = useState<string | null>(null);
