@@ -14,7 +14,9 @@ import {
   addExpense, deleteExpense, setCurrentWeek, closeOutWeek, clearLastWeek,
   getAllState, applyPlanChanges, rejectProposal, applyImportedRecipe,
   applyReceipt, cacheRecipe,
+  getWeekPlan, saveWeekPlan, deleteWeekPlan,
 } from "@/app/actions";
+import type { WeekPlanDinner } from "@/db/schema";
 
 type Props = {
   initialItems: Item[];
@@ -816,6 +818,30 @@ function WeekCarousel({ currentCyclePos, onSelect }: { currentCyclePos: number; 
 }
 
 /* ---------- Week detail sheet ---------- */
+function formatDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function projectDinnersFromRotation(rotation: Dinner[]): WeekPlanDinner[] {
+  return DAY_NAMES.map((day) => {
+    const d = rotation.find((x) => x.day === day);
+    return d
+      ? {
+          day: d.day,
+          meal: d.meal ?? "",
+          tag: d.tag ?? "cook",
+          label: d.label ?? "Real cook",
+          note: d.note ?? "",
+          skip: !!d.skip,
+          skipReason: d.skipReason ?? "",
+        }
+      : { day, meal: "", tag: "cook", label: "Real cook", note: "", skip: false, skipReason: "" };
+  });
+}
+
 function WeekDetailSheet({
   weekStart, cyclePos, meta, dinners, isCurrent, onClose,
 }: {
@@ -826,7 +852,93 @@ function WeekDetailSheet({
   isCurrent: boolean;
   onClose: () => void;
 }) {
+  const weekKey = formatDateKey(weekStart);
   const tagLabel = cyclePos === 3 ? "Bulk week" : cyclePos === 2 ? "Feed week" : "Normal week";
+
+  // For current week, just show the live rotation read-only — that's the
+  // source of truth, and the Week tab already covers editing it. Future
+  // weeks read/write from the weekPlans table.
+  const [editMode, setEditMode] = useState(false);
+  const [loading, setLoading] = useState(!isCurrent);
+  const [saving, setSaving] = useState(false);
+  const [planDinners, setPlanDinners] = useState<WeekPlanDinner[]>(
+    () => projectDinnersFromRotation(dinners),
+  );
+  const [hasSavedPlan, setHasSavedPlan] = useState(false);
+  const [notes, setNotes] = useState("");
+
+  useEffect(() => {
+    if (isCurrent) {
+      setPlanDinners(projectDinnersFromRotation(dinners));
+      setLoading(false);
+      return;
+    }
+    let canceled = false;
+    async function load() {
+      setLoading(true);
+      try {
+        const plan = await getWeekPlan(weekKey);
+        if (canceled) return;
+        if (plan) {
+          setPlanDinners(plan.dinners as WeekPlanDinner[]);
+          setNotes(plan.notes ?? "");
+          setHasSavedPlan(true);
+        } else {
+          setPlanDinners(projectDinnersFromRotation(dinners));
+          setHasSavedPlan(false);
+        }
+      } catch {
+        if (!canceled) {
+          setPlanDinners(projectDinnersFromRotation(dinners));
+          setHasSavedPlan(false);
+        }
+      } finally {
+        if (!canceled) setLoading(false);
+      }
+    }
+    load();
+    return () => { canceled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekKey, isCurrent]);
+
+  function updateDay(day: string, fields: Partial<WeekPlanDinner>) {
+    setPlanDinners((prev) => prev.map((d) => (d.day === day ? { ...d, ...fields } : d)));
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await saveWeekPlan(weekKey, planDinners, notes);
+      setHasSavedPlan(true);
+      setEditMode(false);
+    } catch (e) {
+      alert("Couldn't save: " + (e instanceof Error ? e.message : "unknown"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleReset() {
+    if (!hasSavedPlan) {
+      setEditMode(false);
+      setPlanDinners(projectDinnersFromRotation(dinners));
+      return;
+    }
+    if (!confirm("Delete this saved plan? The week will fall back to projecting from your standing rotation.")) return;
+    setSaving(true);
+    try {
+      await deleteWeekPlan(weekKey);
+      setHasSavedPlan(false);
+      setPlanDinners(projectDinnersFromRotation(dinners));
+      setNotes("");
+      setEditMode(false);
+    } catch (e) {
+      alert("Couldn't reset: " + (e instanceof Error ? e.message : "unknown"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div>
       <h2 className="sheet-h2">{weekRangeLabel(weekStart)}</h2>
@@ -839,6 +951,12 @@ function WeekDetailSheet({
           <div className="rs-label">Budget</div>
           <div className="rs-val" style={{ fontSize: 17 }}>{meta.budget}</div>
         </div>
+        {hasSavedPlan && !isCurrent && (
+          <div className="rs-block" style={{ background: "var(--teal-bg)", color: "var(--teal-ink)" }}>
+            <div className="rs-label" style={{ color: "var(--teal-ink)", opacity: 0.85 }}>Plan</div>
+            <div className="rs-val" style={{ fontSize: 14 }}>Custom saved</div>
+          </div>
+        )}
       </div>
 
       <div className="note" style={{ marginBottom: 12 }}>{meta.desc}</div>
@@ -851,35 +969,103 @@ function WeekDetailSheet({
         </div>
       )}
 
-      <div className="sheet-h3">Dinners</div>
-      {!isCurrent && (
-        <div className="note" style={{ marginTop: 4, marginBottom: 8 }}>
-          Per-week plans are coming. For now this shows your standing 7-day rotation projected forward.
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div className="sheet-h3" style={{ margin: 0 }}>Dinners</div>
+        {!isCurrent && !editMode && !loading && (
+          <button className="btn-ghost" style={{ fontSize: 12, padding: "5px 11px" }} onClick={() => setEditMode(true)}>
+            ✏️ Edit plan
+          </button>
+        )}
+      </div>
+
+      {isCurrent && (
+        <div className="note" style={{ marginTop: 0, marginBottom: 8 }}>
+          This is your active week. Edit individual days from the Week tab.
         </div>
       )}
 
-      {DAY_NAMES.map((day, i) => {
-        const d = dinners.find((x) => x.day === day);
+      {loading && <div className="note">Loading plan…</div>}
+
+      {!loading && !editMode && planDinners.map((d, i) => {
         const date = new Date(weekStart);
         date.setDate(weekStart.getDate() + i);
         const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
         return (
-          <div key={day} style={{ padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
+          <div key={d.day} style={{ padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-              <span className="day-name" style={{ fontSize: 14 }}>{day}</span>
+              <span className="day-name" style={{ fontSize: 14 }}>{d.day}</span>
               <span className="day-date">· {dateLabel}</span>
               <span style={{ flex: 1 }} />
-              {d && !d.skip && <span className={"day-tag t-" + d.tag}>{d.label}</span>}
-              {d?.skip && <span className="day-tag t-skip">Skipped</span>}
+              {!d.skip && <span className={"day-tag t-" + d.tag}>{d.label}</span>}
+              {d.skip && <span className="day-tag t-skip">Skipped</span>}
             </div>
-            <div style={{ fontSize: 15 }}>{d?.skip ? (d.skipReason || "No dinner needed") : (d?.meal || "—")}</div>
-            {d?.note && !d.skip && <div className="gf-mini">{d.note}</div>}
+            <div style={{ fontSize: 15 }}>{d.skip ? (d.skipReason || "No dinner needed") : (d.meal || "—")}</div>
+            {d.note && !d.skip && <div className="gf-mini">{d.note}</div>}
           </div>
         );
       })}
 
+      {!loading && editMode && (
+        <>
+          <textarea
+            className="txt"
+            placeholder="Notes for this week (e.g. cleanse Mon-Wed, pasture-raised Thu-Sun)"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            style={{ width: "100%", minHeight: 60, fontFamily: "inherit", fontSize: 13.5, padding: 9, borderRadius: 8, marginBottom: 12 }}
+          />
+          {planDinners.map((d, i) => {
+            const date = new Date(weekStart);
+            date.setDate(weekStart.getDate() + i);
+            const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+            return (
+              <div key={d.day} className="week-edit-row">
+                <div className="week-edit-head">
+                  <span><strong>{d.day}</strong> <span className="day-date">· {dateLabel}</span></span>
+                  <label className="skip-toggle">
+                    <input
+                      type="checkbox"
+                      checked={d.skip}
+                      onChange={(e) => updateDay(d.day, { skip: e.target.checked })}
+                    />
+                    Skip
+                  </label>
+                </div>
+                {d.skip ? (
+                  <input
+                    className="txt"
+                    placeholder="Reason (e.g. leftovers, family's house)"
+                    value={d.skipReason}
+                    onChange={(e) => updateDay(d.day, { skipReason: e.target.value })}
+                  />
+                ) : (
+                  <input
+                    className="txt"
+                    placeholder="What's for dinner?"
+                    value={d.meal}
+                    onChange={(e) => updateDay(d.day, { meal: e.target.value })}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
+
       <div className="toolbar" style={{ marginTop: 16 }}>
-        <button className="btn-ghost" onClick={onClose}>Close</button>
+        {!loading && editMode ? (
+          <>
+            <button className="btn-primary" onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : "✓ Save plan"}
+            </button>
+            <button className="btn-ghost" onClick={() => { setEditMode(false); }}>Cancel</button>
+            {hasSavedPlan && (
+              <button className="btn-ghost" onClick={handleReset}>🗑 Delete plan</button>
+            )}
+          </>
+        ) : (
+          <button className="btn-ghost" onClick={onClose}>Close</button>
+        )}
       </div>
     </div>
   );

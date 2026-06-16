@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { items, dinners, expenses, household, agentProposals, recipes } from "@/db/schema";
+import { items, dinners, expenses, household, agentProposals, recipes, weekPlans, type WeekPlanDinner } from "@/db/schema";
 import { eq, inArray, sql } from "drizzle-orm";
 import { routeStore, DEFAULT_DINNERS } from "@/lib/data";
 import { revalidatePath } from "next/cache";
@@ -221,6 +221,36 @@ export async function closeOutWeek() {
 
 export async function clearLastWeek() {
   await db.update(household).set({ lastWeekTotal: null }).where(eq(household.id, 1));
+  revalidatePath("/");
+}
+
+// ---- Week plans (future-week storage) ----
+export async function getWeekPlan(weekStart: string) {
+  const rows = await db.select().from(weekPlans).where(eq(weekPlans.weekStart, weekStart)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function saveWeekPlan(weekStart: string, planDinners: WeekPlanDinner[], notes: string = "") {
+  await db
+    .insert(weekPlans)
+    .values({
+      weekStart,
+      dinners: planDinners as unknown as Record<string, unknown>[],
+      notes,
+    })
+    .onConflictDoUpdate({
+      target: weekPlans.weekStart,
+      set: {
+        dinners: planDinners as unknown as Record<string, unknown>[],
+        notes,
+        updatedAt: new Date(),
+      },
+    });
+  revalidatePath("/");
+}
+
+export async function deleteWeekPlan(weekStart: string) {
+  await db.delete(weekPlans).where(eq(weekPlans.weekStart, weekStart));
   revalidatePath("/");
 }
 

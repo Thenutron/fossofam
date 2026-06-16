@@ -64,6 +64,20 @@ export const people = pgTable("people", {
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
+// Per-calendar-week dinner plans, keyed by Sunday's date (YYYY-MM-DD).
+// The live `dinners` table is the CURRENT week's source of truth; this
+// table stores plans for future weeks so the family can plan ahead.
+// When close-out-week advances the cycle, a matching weekPlans row can
+// be promoted into the dinners table.
+export const weekPlans = pgTable("week_plans", {
+  id: serial("id").primaryKey(),
+  weekStart: text("week_start").notNull().unique(), // YYYY-MM-DD (Sunday)
+  dinners: jsonb("dinners").notNull(), // WeekPlanDinner[]
+  notes: text("notes").default(""),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // Cached recipes keyed by canonical meal name. Hit on get_recipe before
 // burning an LLM call. usedCount + lastUsedAt let us prioritize / prune
 // later. Payload is the same RecipeProposal shape the client renders.
@@ -104,3 +118,16 @@ export type Household = typeof household.$inferSelect;
 export type Person = typeof people.$inferSelect;
 export type AgentProposal = typeof agentProposals.$inferSelect;
 export type Recipe = typeof recipes.$inferSelect;
+export type WeekPlan = typeof weekPlans.$inferSelect;
+
+// Serialized dinner shape stored inside weekPlans.dinners JSON column.
+// Mirrors Dinner minus id + sortOrder. Used by the WeekDetailSheet editor.
+export type WeekPlanDinner = {
+  day: string;
+  meal: string;
+  tag: string;
+  label: string;
+  note: string;
+  skip: boolean;
+  skipReason: string;
+};

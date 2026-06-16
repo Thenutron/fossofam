@@ -315,6 +315,27 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
   }
   .shop-mode-bar .smb-receipt:active { transform: scale(0.96); }
 
+  /* WEEK PLAN EDITOR ROWS */
+  .week-edit-row {
+    padding: 12px 0; border-bottom: 1px solid var(--line);
+  }
+  .week-edit-row:last-of-type { border-bottom: none; }
+  .week-edit-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 6px; font-size: 14px;
+  }
+  .week-edit-row .skip-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .week-edit-row .skip-toggle input[type="checkbox"] {
+    appearance: auto; width: 16px; height: 16px;
+  }
+  .week-edit-row input.txt {
+    width: 100%; font-size: 14.5px;
+  }
+
   .cached-badge {
     background: var(--teal-bg); color: var(--teal-ink);
     font-size: 10.5px; font-weight: 700;
