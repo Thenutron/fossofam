@@ -683,6 +683,8 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         itemsByStore={itemsByStore}
         onlineActive={onlineActive}
         currentWeek={currentWeek}
+        dinnersCount={dinners.filter((d) => !d.skip && d.meal && d.meal.trim().length > 0).length}
+        onOpenStock={() => setSheet("stock")}
         onAddItem={doAddItem}
         onToggle={doToggle}
         onDelete={doDelete}
@@ -1267,7 +1269,7 @@ async function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise
 // row comes pre-filled with the last price, and the agent can ground its
 // budget proposals in real receipt numbers.
 function ShoppingSection({
-  items, active, itemsByStore, onlineActive, currentWeek,
+  items, active, itemsByStore, onlineActive, currentWeek, dinnersCount, onOpenStock,
   onAddItem, onToggle, onDelete, onClearChecked, onUpdateCost, onLogTrip, onApplyReceipt,
   onReassign, onBulkDelete,
   staplesOpen, setStaplesOpen,
@@ -1277,6 +1279,8 @@ function ShoppingSection({
   itemsByStore: { key: string; store: typeof STORE[string]; target: number; fallback: string | null; items: Item[] }[];
   onlineActive: Item[];
   currentWeek: number;
+  dinnersCount: number;
+  onOpenStock: () => void;
   onAddItem: (name: string, store: string) => void;
   onToggle: (id: number, done: boolean) => void;
   onDelete: (id: number) => void;
@@ -1302,6 +1306,21 @@ function ShoppingSection({
   const [activeStore, setActiveStore] = useState<string>("");
   const [elsewhereOpen, setElsewhereOpen] = useState(false);
   const userPickedStoreRef = useRef(false);
+  const elsewhereDefaultedRef = useRef(false);
+
+  // Auto-expand Elsewhere on first item load if most items are NOT at the
+  // anchor — otherwise the user lands on Shopping seeing 1 item when 6
+  // are hiding under the chevron. User taps to override, sticks after.
+  useEffect(() => {
+    if (elsewhereDefaultedRef.current) return;
+    if (!items.length || !activeStore) return;
+    const here = items.filter((i) => !i.done && i.store === activeStore).length;
+    const elsewhere = items.filter((i) => !i.done && i.store !== activeStore && i.store !== "online").length;
+    if (elsewhere > here && elsewhere > 0) {
+      setElsewhereOpen(true);
+    }
+    elsewhereDefaultedRef.current = true;
+  }, [items, activeStore]);
 
   // Only restore from localStorage if the user EXPLICITLY picked an anchor
   // before. The user-picked flag prevents stale auto-default values (from
@@ -1588,20 +1607,20 @@ function ShoppingSection({
         </>
       )}
 
-      {items.length > 0 && (
-        <div className="anchor-bar">
-          <span className="ab-label">I&apos;m at</span>
-          <div className="ab-select-wrap">
-            <select
-              className="ab-select"
-              value={activeStore || "fred"}
-              onChange={(e) => pickStore(e.target.value)}
-            >
-              {STORE_ORDER.filter((k) => k !== "online").map((k) => (
-                <option key={k} value={k}>{STORE[k].name}</option>
-              ))}
-            </select>
-          </div>
+      <div className="anchor-bar">
+        <span className="ab-label">I&apos;m at</span>
+        <div className="ab-select-wrap">
+          <select
+            className="ab-select"
+            value={activeStore || "fred"}
+            onChange={(e) => pickStore(e.target.value)}
+          >
+            {STORE_ORDER.filter((k) => k !== "online").map((k) => (
+              <option key={k} value={k}>{STORE[k].name}</option>
+            ))}
+          </select>
+        </div>
+        {items.length > 0 && (
           <span className="ab-count">
             {(() => {
               const activeGroup = itemsByStore.find((g) => g.key === activeStore);
@@ -1617,7 +1636,16 @@ function ShoppingSection({
               );
             })()}
           </span>
-        </div>
+        )}
+      </div>
+
+      {/* Always-visible Build CTA — the shopping list doesn't auto-derive
+          from dinners; this is how the AI populates it. Shown whenever
+          there are dinners to build from. */}
+      {dinnersCount >= 3 && (
+        <button className="build-from-dinners" onClick={onOpenStock}>
+          🛒 Build shopping from this week&apos;s dinners
+        </button>
       )}
 
       {items.length === 0 ? (
