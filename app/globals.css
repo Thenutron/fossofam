@@ -315,6 +315,36 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
   }
   .shop-mode-bar .smb-receipt:active { transform: scale(0.96); }
 
+  /* TONIGHT CARD — larger, recipe-inline */
+  .tonight-card { padding: 22px 22px 24px; }
+  .tonight-card .tonight-meal {
+    font-size: 28px; font-weight: 700; letter-spacing: -0.6px;
+    line-height: 1.15; margin: 6px 0 8px;
+  }
+  .tonight-card .dash-tom-tag { font-size: 12px; padding: 3px 11px; }
+  .tonight-card .dash-tom-note { font-size: 14px; margin: 8px 0 0; line-height: 1.45; }
+  .tonight-card .tonight-actions {
+    display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px;
+  }
+  .tonight-card .tonight-actions .swap-btn {
+    padding: 10px 16px; font-size: 14px;
+  }
+  .tonight-card .swap-btn.on {
+    background: var(--coral-ink) !important; color: #fff !important;
+  }
+
+  .inline-recipe {
+    margin-top: 18px; padding-top: 18px;
+    border-top: 1px solid var(--line);
+  }
+  .inline-recipe.loading {
+    color: var(--ink-2); font-size: 14px; font-style: italic;
+  }
+  .inline-recipe-title {
+    font-size: 19px; font-weight: 700; letter-spacing: -0.3px;
+    margin: 0;
+  }
+
   /* WEEK PLAN EDITOR ROWS */
   .week-edit-row {
     padding: 12px 0; border-bottom: 1px solid var(--line);

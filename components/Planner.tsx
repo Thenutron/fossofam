@@ -272,6 +272,36 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
     cached: boolean;
   }>({ open: false, meal: "", kind: "dinner", loading: false, error: null, recipe: null, cached: false });
 
+  // Tonight-tab inline recipe state. Separate from the modal recipeSheetState
+  // so the Tonight tab can show the recipe + substitution chat right inline
+  // without taking over the screen. Tied to the current `today.meal`.
+  const [tonightRecipe, setTonightRecipe] = useState<{
+    meal: string;
+    loading: boolean;
+    error: string | null;
+    recipe: Recipe | null;
+    cached: boolean;
+  } | null>(null);
+
+  async function loadTonightRecipe(meal: string, kind: string, forceFresh: boolean = false) {
+    if (!meal.trim()) return;
+    setTonightRecipe({ meal, loading: true, error: null, recipe: null, cached: false });
+    try {
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool: "get_recipe", note: "", meal, kind, forceFresh }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+      setTonightRecipe({ meal, loading: false, error: null, recipe: data.proposal, cached: !!data.cached });
+    } catch (e) {
+      setTonightRecipe({ meal, loading: false, error: e instanceof Error ? e.message : "Unknown error", recipe: null, cached: false });
+    }
+  }
+
+  function closeTonightRecipe() { setTonightRecipe(null); }
+
   async function getRecipe(meal: string, kind: string, forceFresh: boolean = false) {
     if (!meal.trim()) return;
     setRecipeSheetState({ open: true, meal, kind, loading: true, error: null, recipe: null, cached: false });
@@ -471,13 +501,46 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         );
       })()}
 
-      {/* ============ TONIGHT + TOMORROW ============ */}
+      {/* ============ TONIGHT ============ */}
       {tab === "tonight" && (
-        <section className="card">
+        <section className="card tonight-card">
           <div className="dash-card-head"><i className="ti ti-flame" /><h2>Tonight · {todayName}</h2></div>
-          <DinnerSpotlight d={today} prominent onSkip={(d) => toggleRowMenu(d.id, "skip")} onUnskip={() => doSkip(today.id, false, "")} getRecipe={getRecipe} />
-          <div className="dash-card-head" style={{ marginTop: 18 }}><i className="ti ti-calendar" /><h2 style={{ fontSize: 16 }}>Tomorrow · {tomorrowName}</h2></div>
-          <DinnerSpotlight d={tomorrow} prominent={false} onSkip={(d) => toggleRowMenu(d.id, "skip")} onUnskip={() => doSkip(tomorrow.id, false, "")} getRecipe={getRecipe} />
+          {today.skip ? (
+            <div>
+              <div className="tonight-meal" style={{ color: "var(--ink-3)" }}>No dinner needed</div>
+              <span className="dash-tom-tag t-skip">Skipped</span>
+              {today.skipReason && <div className="dash-tom-note">{today.skipReason}</div>}
+              <button className="swap-btn" style={{ marginTop: 12 }} onClick={() => doSkip(today.id, false, "")}>↩ un-skip</button>
+            </div>
+          ) : (
+            <>
+              <div className="tonight-meal">{today.meal || "—"}</div>
+              {today.label && <span className={"dash-tom-tag t-" + today.tag}>{today.label}</span>}
+              {today.note && <div className="dash-tom-note">{today.note}</div>}
+
+              <div className="tonight-actions">
+                <button
+                  className={"swap-btn recipe-btn" + (tonightRecipe?.meal === today.meal && tonightRecipe.recipe ? " on" : "")}
+                  onClick={() =>
+                    tonightRecipe?.meal === today.meal && tonightRecipe.recipe
+                      ? closeTonightRecipe()
+                      : loadTonightRecipe(today.meal, tagToKind(today.tag))
+                  }
+                >
+                  {tonightRecipe?.meal === today.meal && tonightRecipe.recipe ? "▾ Hide recipe" : "📖 Show recipe"}
+                </button>
+                <button className="swap-btn" onClick={() => setTab("week")}>↺ Swap or skip</button>
+              </div>
+
+              {tonightRecipe && tonightRecipe.meal === today.meal && (
+                <InlineRecipe
+                  state={tonightRecipe}
+                  onRegenerate={() => loadTonightRecipe(today.meal, tagToKind(today.tag), true)}
+                  onClose={closeTonightRecipe}
+                />
+              )}
+            </>
+          )}
         </section>
       )}
 
@@ -1753,6 +1816,166 @@ function BudgetSection({
         </div>
       )}
     </section>
+  );
+}
+
+/* ---------- Inline recipe (Tonight tab) ---------- */
+// Same render as RecipeSheet's contents, just embedded directly in the
+// Tonight card. Also carries the modify-recipe (substitution) chat so
+// the family can swap an out-of-something ingredient without opening
+// a separate modal.
+function InlineRecipe({
+  state, onRegenerate, onClose,
+}: {
+  state: {
+    meal: string;
+    loading: boolean;
+    error: string | null;
+    recipe: Recipe | null;
+    cached: boolean;
+  };
+  onRegenerate: () => void;
+  onClose: () => void;
+}) {
+  const [override, setOverride] = useState<(Recipe & { change_summary?: string }) | null>(null);
+  const [modifyInput, setModifyInput] = useState("");
+  const [modifyLoading, setModifyLoading] = useState(false);
+  const [modifyError, setModifyError] = useState<string | null>(null);
+  const displayed = override ?? state.recipe;
+
+  useEffect(() => {
+    setOverride(null);
+    setModifyInput("");
+    setModifyError(null);
+  }, [state.recipe]);
+
+  async function submitModify() {
+    if (!modifyInput.trim() || !displayed) return;
+    setModifyLoading(true);
+    setModifyError(null);
+    try {
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tool: "modify_recipe",
+          note: modifyInput,
+          currentRecipe: displayed,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+      setOverride(data.proposal);
+      setModifyInput("");
+    } catch (e) {
+      setModifyError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setModifyLoading(false);
+    }
+  }
+
+  if (state.loading) {
+    return <div className="inline-recipe loading">Reading your recipe… (cached recipes return instantly next time)</div>;
+  }
+  if (state.error) {
+    return (
+      <div className="inline-recipe">
+        <div className="hint" style={{ color: "var(--coral-ink)" }}>{state.error}</div>
+        <button className="btn-ghost" style={{ marginTop: 8 }} onClick={onClose}>Hide</button>
+      </div>
+    );
+  }
+  if (!displayed) return null;
+
+  return (
+    <div className="inline-recipe">
+      {override?.change_summary && (
+        <div className="last-week-banner good" style={{ marginBottom: 12 }}>
+          <i className="ti ti-edit" />
+          <div><strong>Changed:</strong> {override.change_summary}</div>
+        </div>
+      )}
+
+      <h3 className="inline-recipe-title">{displayed.title}</h3>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", margin: "6px 0 14px", fontSize: 13, color: "var(--ink-2)" }}>
+        <span>🍽 {displayed.servings}</span>
+        <span>⏱ {displayed.prep_time} prep</span>
+        <span>🔥 {displayed.cook_time}</span>
+        {state.cached && !override && <span className="cached-badge">saved</span>}
+        {override && <span className="cached-badge" style={{ background: "var(--amber-bg)", color: "var(--amber-ink)" }}>modified</span>}
+        <button className="btn-ghost" style={{ marginLeft: "auto", fontSize: 12, padding: "4px 10px" }} onClick={onRegenerate}>
+          🔄 New version
+        </button>
+      </div>
+
+      {displayed.when_to_start && (
+        <div className="last-week-banner good" style={{ marginBottom: 12 }}>
+          <i className="ti ti-clock" />
+          <div><strong>Start by:</strong> {displayed.when_to_start}</div>
+        </div>
+      )}
+
+      <h4 className="sheet-h3">Ingredients</h4>
+      <ul style={{ paddingLeft: 18, margin: 0, fontSize: 14, lineHeight: 1.7 }}>
+        {displayed.ingredients.map((ing, i) => (
+          <li key={i}>
+            <strong>{ing.amount}</strong> {ing.item}
+            {ing.note && <span className="gf-mini" style={{ display: "inline", marginLeft: 6 }}>({ing.note})</span>}
+          </li>
+        ))}
+      </ul>
+
+      <h4 className="sheet-h3">Steps</h4>
+      <ol style={{ paddingLeft: 22, margin: 0, fontSize: 14, lineHeight: 1.8 }}>
+        {displayed.steps.map((s, i) => (
+          <li key={i} style={{ marginBottom: 4 }}>{s.replace(/^\s*(?:step\s*)?\d+[.)]\s*/i, "")}</li>
+        ))}
+      </ol>
+
+      {displayed.tips.length > 0 && (
+        <>
+          <h4 className="sheet-h3">Tips</h4>
+          <ul style={{ paddingLeft: 18, margin: 0, fontSize: 14, lineHeight: 1.7 }}>
+            {displayed.tips.map((t, i) => (<li key={i}>{t}</li>))}
+          </ul>
+        </>
+      )}
+
+      {/* Substitute chat inline */}
+      <div className="recipe-modify">
+        <div className="sheet-h3">Out of something? Tweak it?</div>
+        <div className="add-row" style={{ marginBottom: 0 }}>
+          <input
+            className="txt"
+            type="text"
+            placeholder="e.g. out of cream, use chicken, kid version"
+            value={modifyInput}
+            onChange={(e) => setModifyInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submitModify(); }}
+            disabled={modifyLoading}
+          />
+          <button
+            className="btn-primary"
+            onClick={submitModify}
+            disabled={modifyLoading || !modifyInput.trim()}
+          >
+            {modifyLoading ? "Thinking…" : "Ask"}
+          </button>
+        </div>
+        {modifyError && (
+          <div className="hint" style={{ color: "var(--coral-ink)", marginTop: 6 }}>{modifyError}</div>
+        )}
+        {override && (
+          <button
+            className="btn-ghost"
+            style={{ marginTop: 8, fontSize: 12 }}
+            onClick={() => setOverride(null)}
+          >
+            ↩ revert to saved
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
