@@ -81,6 +81,10 @@ type AgentRequest = {
   // For parse_receipt specifically — base64 JPEG/PNG sans the data: prefix.
   imageBase64?: string;
   imageMediaType?: string;
+  // For plan_shopping — the user's anchor store for this week. Items get
+  // routed here whenever possible; only divert when something truly isn't
+  // carried there.
+  anchorStore?: string;
 };
 
 // Strip HTML to readable text for the LLM. Good-enough heuristic for the
@@ -167,8 +171,17 @@ Extract the actual recipe from the page text above. Ignore the blog narrative, a
     const dinners = req.dinners ?? [];
     const items = req.items ?? [];
     const cw = req.currentWeek ?? 1;
+    const anchor = req.anchorStore && STORE[req.anchorStore] ? req.anchorStore : "";
+    const anchorBlock = anchor
+      ? `# Anchor store
+The family is anchoring this week's run at: ${STORE[anchor].name} (${anchor}).
+ROUTING RULE: route every item to '${anchor}' UNLESS the store list above flags it as not carried there. Examples that should NOT go to '${anchor}': raw milk (→ coop or rawmilk pickup), chicken feed (→ coastal), mold-free coffee (→ sprouts or online). Everything else: ${anchor}.`
+      : `# Anchor store
+The family has not picked an anchor this week. Use the default store-per-item routing.`;
     return `# Current week
 Cycle week: ${cw} of 3 (${cw === 3 ? "bulk week" : cw === 2 ? "feed week" : "normal week"})
+
+${anchorBlock}
 
 # Current 7-day dinner plan
 ${dinners.map((d) => `- ${d.day} [${d.tag}/${d.label}]${d.skip ? " (SKIPPED — ignore this day)" : ""}: ${d.meal || "(blank — ignore this day)"}${d.note ? " — note: " + d.note : ""}`).join("\n")}

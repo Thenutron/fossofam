@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { items, dinners, expenses, household, agentProposals } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { routeStore, DEFAULT_DINNERS } from "@/lib/data";
 import { revalidatePath } from "next/cache";
 
@@ -31,6 +31,26 @@ export async function deleteItem(id: number) {
 
 export async function clearCheckedItems() {
   await db.delete(items).where(eq(items.done, true));
+  revalidatePath("/");
+}
+
+// Batch reassign items to a different store. Used by the overflow flow when
+// the family didn't get everything at their anchor store and wants to roll
+// the leftovers to the next stop. Resets done=false so they're shop-ready
+// at the new store.
+export async function reassignItems(ids: number[], store: string) {
+  if (ids.length === 0) return;
+  await db
+    .update(items)
+    .set({ store, done: false })
+    .where(inArray(items.id, ids));
+  revalidatePath("/");
+}
+
+// Batch delete — used by the overflow flow's "skip these" path.
+export async function bulkDeleteItems(ids: number[]) {
+  if (ids.length === 0) return;
+  await db.delete(items).where(inArray(items.id, ids));
   revalidatePath("/");
 }
 

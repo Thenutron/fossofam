@@ -9,6 +9,7 @@ import {
 } from "@/lib/data";
 import {
   addItem, toggleItem, deleteItem, clearCheckedItems, updateItemCost,
+  reassignItems, bulkDeleteItems,
   updateDinnerMeal, updateDinnerSlot, setDinnerSkip,
   addExpense, deleteExpense, setCurrentWeek, closeOutWeek, clearLastWeek,
   getAllState, applyPlanChanges, rejectProposal, applyImportedRecipe,
@@ -182,6 +183,18 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   function doUpdateItemCost(id: number, cost: number | null) {
     setItems((p) => p.map((i) => (i.id === id ? { ...i, cost, costAt: cost === null ? null : new Date() } : i)));
     startTransition(() => updateItemCost(id, cost));
+  }
+  function doReassignItems(ids: number[], store: string) {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    setItems((p) => p.map((i) => (idSet.has(i.id) ? { ...i, store, done: false } : i)));
+    startTransition(() => reassignItems(ids, store));
+  }
+  function doBulkDeleteItems(ids: number[]) {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    setItems((p) => p.filter((i) => !idSet.has(i.id)));
+    startTransition(() => bulkDeleteItems(ids));
   }
   function doUpdateMeal(id: number, meal: string) {
     setDinners((p) => p.map((d) => (d.id === id ? { ...d, meal } : d)));
@@ -433,6 +446,8 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         onDelete={doDelete}
         onClearChecked={doClearChecked}
         onUpdateCost={doUpdateItemCost}
+        onReassign={doReassignItems}
+        onBulkDelete={doBulkDeleteItems}
         onLogTrip={(name, amount, kind) => doAddExpense(name, amount, kind)}
         onApplyReceipt={(payload) => {
           const now = new Date();
@@ -750,6 +765,7 @@ async function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise
 function ShoppingSection({
   items, active, itemsByStore, onlineActive, currentWeek,
   onAddItem, onToggle, onDelete, onClearChecked, onUpdateCost, onLogTrip, onApplyReceipt,
+  onReassign, onBulkDelete,
   staplesOpen, setStaplesOpen,
 }: {
   items: Item[];
@@ -764,6 +780,8 @@ function ShoppingSection({
   onUpdateCost: (id: number, cost: number | null) => void;
   onLogTrip: (name: string, amount: number, kind: string) => void;
   onApplyReceipt: (payload: ReceiptApplyPayload) => void;
+  onReassign: (ids: number[], store: string) => void;
+  onBulkDelete: (ids: number[]) => void;
   staplesOpen: boolean;
   setStaplesOpen: (v: boolean | ((prev: boolean) => boolean)) => void;
 }) {
@@ -772,6 +790,66 @@ function ShoppingSection({
   // Local edit buffer keyed by item id. Only used while the field is being
   // edited; on blur we persist to the DB via onUpdateCost.
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
+
+  // Anchor store — where the family is doing the main shop this week. The
+  // list filters to this store; everything else collapses behind "Elsewhere".
+  // Persisted locally so it survives refresh, defaults to whichever store
+  // has the most items (or the user's last pick if any).
+  const [activeStore, setActiveStore] = useState<string>("");
+  const [elsewhereOpen, setElsewhereOpen] = useState(false);
+  const userPickedStoreRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("fossofam-active-store");
+      if (saved && STORE[saved]) {
+        setActiveStore(saved);
+        userPickedStoreRef.current = true;
+      }
+    } catch {}
+  }, []);
+
+  // If the user hasn't explicitly picked a store, default to the one with the
+  // most active items. Keeps a single source of truth without surprising the
+  // user after they pick.
+  useEffect(() => {
+    if (userPickedStoreRef.current) return;
+    if (!items.length) return;
+    const counts: Record<string, number> = {};
+    for (const i of items) {
+      if (i.done) continue;
+      if (i.store === "online") continue;
+      counts[i.store] = (counts[i.store] || 0) + 1;
+    }
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (top && top !== activeStore) setActiveStore(top);
+  }, [items, activeStore]);
+
+  // Persist whenever activeStore changes (covers both auto-default and explicit
+  // user pick). Other surfaces (PlanShoppingPanel) read from this key.
+  useEffect(() => {
+    if (!activeStore) return;
+    try { localStorage.setItem("fossofam-active-store", activeStore); } catch {}
+  }, [activeStore]);
+
+  function pickStore(key: string) {
+    setActiveStore(key);
+    userPickedStoreRef.current = true;
+  }
+
+  // Overflow sheet — surfaces leftovers at the active store after a trip
+  // and lets the user roll them to the next store or skip them.
+  const [overflowSheet, setOverflowSheet] = useState<{ open: boolean; items: Item[] }>({ open: false, items: [] });
+  function closeOverflow() { setOverflowSheet({ open: false, items: [] }); }
+  function overflowReassign(ids: number[], store: string) {
+    onReassign(ids, store);
+    closeOverflow();
+    pickStore(store);  // move the user to the new anchor automatically
+  }
+  function overflowSkip(ids: number[]) {
+    onBulkDelete(ids);
+    closeOverflow();
+  }
 
   // Receipt scan state.
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -839,6 +917,19 @@ function ShoppingSection({
     });
     closeReceiptSheet();
     setShopMode(false);
+
+    // Surface overflow at the anchor: items that won't be marked done by
+    // either receipt-matching or what the user already checked in shop mode.
+    if (activeStore) {
+      const willBeDoneIds = new Set<number>([
+        ...items.filter((i) => i.done).map((i) => i.id),
+        ...updates.map((u) => u.id),
+      ]);
+      const leftovers = items.filter((i) => !willBeDoneIds.has(i.id) && i.store === activeStore);
+      if (leftovers.length > 0) {
+        setOverflowSheet({ open: true, items: leftovers });
+      }
+    }
   }
 
   // Persist shop-mode toggle only (cheap; nice to survive a refresh).
@@ -886,19 +977,31 @@ function ShoppingSection({
       alert("Check items off as you grab them — total comes from items in the cart.");
       return;
     }
-    // Default name: store with the most checked items in the cart.
+    // Default name: the anchor store, with a fallback to the store with most cart items.
     const storesByCount: Record<string, number> = {};
     for (const i of items) {
       if (!i.done || !i.cost || i.cost <= 0) continue;
       storesByCount[i.store] = (storesByCount[i.store] || 0) + 1;
     }
     const topStoreKey = Object.entries(storesByCount).sort((a, b) => b[1] - a[1])[0]?.[0];
-    const defaultName = topStoreKey ? STORE[topStoreKey].name : "Shopping trip";
+    const defaultName = activeStore && STORE[activeStore]
+      ? STORE[activeStore].name
+      : topStoreKey
+      ? STORE[topStoreKey].name
+      : "Shopping trip";
     const name = prompt(`Log $${tripTotal.toFixed(2)} as:`, defaultName);
     if (name === null) return;
     const kind = currentWeek === 3 ? "bulk" : "weekly";
     onLogTrip(name.trim() || defaultName, Math.round(tripTotal * 100) / 100, kind);
     setShopMode(false);
+
+    // Surface overflow: items at the anchor store still unchecked.
+    if (activeStore) {
+      const leftovers = items.filter((i) => !i.done && i.store === activeStore);
+      if (leftovers.length > 0) {
+        setOverflowSheet({ open: true, items: leftovers });
+      }
+    }
   }
 
   return (
@@ -948,6 +1051,19 @@ function ShoppingSection({
         </SheetOverlay>
       )}
 
+      {overflowSheet.open && (
+        <SheetOverlay onClose={closeOverflow}>
+          <OverflowSheet
+            items={overflowSheet.items}
+            fromStoreName={activeStore && STORE[activeStore] ? STORE[activeStore].name : "this store"}
+            currentStoreKey={activeStore}
+            onSendTo={(storeKey) => overflowReassign(overflowSheet.items.map((i) => i.id), storeKey)}
+            onSkip={() => overflowSkip(overflowSheet.items.map((i) => i.id))}
+            onCancel={closeOverflow}
+          />
+        </SheetOverlay>
+      )}
+
       {!shopMode && (
         <>
           <div className="add-row">
@@ -971,71 +1087,128 @@ function ShoppingSection({
         </>
       )}
 
+      {items.length > 0 && (
+        <div className="anchor-bar">
+          <span className="ab-label">I&apos;m at</span>
+          <div className="ab-select-wrap">
+            <select
+              className="ab-select"
+              value={activeStore || "fred"}
+              onChange={(e) => pickStore(e.target.value)}
+            >
+              {STORE_ORDER.filter((k) => k !== "online").map((k) => (
+                <option key={k} value={k}>{STORE[k].name}</option>
+              ))}
+            </select>
+          </div>
+          <span className="ab-count">
+            {(() => {
+              const activeGroup = itemsByStore.find((g) => g.key === activeStore);
+              const activeCount = activeGroup?.items.filter((i) => !i.done).length ?? 0;
+              const elsewhereCount = itemsByStore
+                .filter((g) => g.key !== activeStore && g.key !== "online")
+                .reduce((s, g) => s + g.items.filter((i) => !i.done).length, 0);
+              return (
+                <>
+                  <strong>{activeCount}</strong> here
+                  {elsewhereCount > 0 && <> · {elsewhereCount} elsewhere</>}
+                </>
+              );
+            })()}
+          </span>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <div className="empty" style={{ marginTop: 8 }}>All stocked.</div>
       ) : (
         <>
-          {itemsByStore.filter((g) => g.key !== "online").map((g) => {
-            const remaining = g.items.filter((i) => !i.done).length;
-            const byArea = AREAS
-              .map((a) => ({ area: a, items: g.items.filter((i) => routeArea(i.name) === a) }))
-              .filter((sub) => sub.items.length > 0);
-            const showAreaHeads = byArea.length > 1;
-            const storeCartSubtotal = g.items.reduce((s, it) => (it.done && it.cost ? s + it.cost : s), 0);
-            return (
-              <div className="store-group" key={g.key}>
-                <div className="store-head">
-                  <span className="store-name">
-                    <span className="store-swatch" style={{ background: g.store.color }} />
-                    {g.store.name}
-                  </span>
-                  <span className="store-meta">
-                    {shopMode && storeCartSubtotal > 0 && (
-                      <span style={{ marginRight: 8, fontWeight: 600, color: "var(--ink)" }}>${storeCartSubtotal.toFixed(2)}</span>
-                    )}
-                    {remaining}
-                  </span>
-                </div>
-                {byArea.map((sub) => (
-                  <div className="area-group" key={sub.area}>
-                    {showAreaHeads && (
-                      <div className="area-head">
-                        <span className="area-icon">{AREA[sub.area].icon}</span>
-                        {AREA[sub.area].name}
-                      </div>
-                    )}
-                    {sub.items.map((it) => (
-                      <div className={"item" + (it.done ? " done" : "")} key={it.id}>
-                        <input type="checkbox" checked={it.done} onChange={(e) => onToggle(it.id, e.target.checked)} />
-                        <span className="item-name">{it.name}</span>
-                        {shopMode && (
-                          <input
-                            className="item-price"
-                            type="number"
-                            inputMode="decimal"
-                            step="0.01"
-                            min="0"
-                            placeholder="$"
-                            value={priceFor(it)}
-                            onChange={(e) => setPriceDraft((p) => ({ ...p, [it.id]: e.target.value }))}
-                            onBlur={() => commitPrice(it.id)}
-                            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                            onFocus={(e) => e.target.select()}
-                          />
-                        )}
-                        {!shopMode && <span className="item-x" onClick={() => onDelete(it.id)}>×</span>}
-                      </div>
-                    ))}
+          {(() => {
+            const allGroups = itemsByStore.filter((g) => g.key !== "online");
+            const activeGroup = allGroups.find((g) => g.key === activeStore);
+            const otherGroups = allGroups.filter((g) => g.key !== activeStore);
+            const elsewhereTotal = otherGroups.reduce((s, g) => s + g.items.filter((i) => !i.done).length, 0);
+
+            const renderGroup = (g: typeof allGroups[number]) => {
+              const remaining = g.items.filter((i) => !i.done).length;
+              const byArea = AREAS
+                .map((a) => ({ area: a, items: g.items.filter((i) => routeArea(i.name) === a) }))
+                .filter((sub) => sub.items.length > 0);
+              const showAreaHeads = byArea.length > 1;
+              const storeCartSubtotal = g.items.reduce((s, it) => (it.done && it.cost ? s + it.cost : s), 0);
+              return (
+                <div className="store-group" key={g.key}>
+                  <div className="store-head">
+                    <span className="store-name">
+                      <span className="store-swatch" style={{ background: g.store.color }} />
+                      {g.store.name}
+                    </span>
+                    <span className="store-meta">
+                      {shopMode && storeCartSubtotal > 0 && (
+                        <span style={{ marginRight: 8, fontWeight: 600, color: "var(--ink)" }}>${storeCartSubtotal.toFixed(2)}</span>
+                      )}
+                      {remaining}
+                    </span>
                   </div>
-                ))}
-                {g.fallback && remaining > 0 && !shopMode && (
-                  <div className="gf-mini" style={{ marginTop: 6 }}>
-                    ↳ {STORE[g.fallback].name}
+                  {byArea.map((sub) => (
+                    <div className="area-group" key={sub.area}>
+                      {showAreaHeads && (
+                        <div className="area-head">
+                          <span className="area-icon">{AREA[sub.area].icon}</span>
+                          {AREA[sub.area].name}
+                        </div>
+                      )}
+                      {sub.items.map((it) => (
+                        <div className={"item" + (it.done ? " done" : "")} key={it.id}>
+                          <input type="checkbox" checked={it.done} onChange={(e) => onToggle(it.id, e.target.checked)} />
+                          <span className="item-name">{it.name}</span>
+                          {shopMode && (
+                            <input
+                              className="item-price"
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0"
+                              placeholder="$"
+                              value={priceFor(it)}
+                              onChange={(e) => setPriceDraft((p) => ({ ...p, [it.id]: e.target.value }))}
+                              onBlur={() => commitPrice(it.id)}
+                              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                              onFocus={(e) => e.target.select()}
+                            />
+                          )}
+                          {!shopMode && <span className="item-x" onClick={() => onDelete(it.id)}>×</span>}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                  {g.fallback && remaining > 0 && !shopMode && (
+                    <div className="gf-mini" style={{ marginTop: 6 }}>
+                      ↳ {STORE[g.fallback].name}
+                    </div>
+                  )}
+                </div>
+              );
+            };
+
+            return (
+              <>
+                {activeGroup && renderGroup(activeGroup)}
+                {!activeGroup && elsewhereTotal > 0 && (
+                  <div className="empty" style={{ marginTop: 8 }}>Nothing for {STORE[activeStore]?.name ?? "this store"} yet — try expanding Elsewhere below.</div>
+                )}
+                {otherGroups.length > 0 && elsewhereTotal > 0 && (
+                  <div className="elsewhere-section">
+                    <button className="elsewhere-toggle" onClick={() => setElsewhereOpen((v) => !v)}>
+                      <span>{elsewhereOpen ? "▾" : "▸"} Elsewhere</span>
+                      <span className="elsewhere-count">{elsewhereTotal}</span>
+                    </button>
+                    {elsewhereOpen && otherGroups.map(renderGroup)}
                   </div>
                 )}
-              </div>
+              </>
             );
-          })}
+          })()}
           {onlineActive.length > 0 && !shopMode && (
             <div className="dash-online-cta">
               <i className="ti ti-world" />
@@ -1573,6 +1746,8 @@ function PlanShoppingPanel({
     async function run() {
       setLoading(true);
       setError(null);
+      let anchorStore = "";
+      try { anchorStore = localStorage.getItem("fossofam-active-store") || ""; } catch {}
       try {
         const res = await fetch("/api/agent", {
           method: "POST",
@@ -1583,6 +1758,7 @@ function PlanShoppingPanel({
             dinners,
             items,
             currentWeek,
+            anchorStore,
           }),
         });
         const data = await res.json();
@@ -1666,6 +1842,47 @@ function PlanShoppingPanel({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/* ---------- Overflow sheet (post-trip "send leftovers to next store") ---------- */
+function OverflowSheet({
+  items, fromStoreName, currentStoreKey, onSendTo, onSkip, onCancel,
+}: {
+  items: Item[];
+  fromStoreName: string;
+  currentStoreKey: string;
+  onSendTo: (storeKey: string) => void;
+  onSkip: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div>
+      <h2 className="sheet-h2">{items.length} left at {fromStoreName}</h2>
+      <div className="note" style={{ marginBottom: 12 }}>Where do you want to grab these?</div>
+
+      <div className="overflow-items">
+        {items.map((i) => (
+          <div key={i.id} className="overflow-item">{i.name}</div>
+        ))}
+      </div>
+
+      <div className="sheet-h3" style={{ marginTop: 16 }}>Send to</div>
+      <div className="ideas">
+        {STORE_ORDER
+          .filter((k) => k !== currentStoreKey && k !== "online")
+          .map((k) => (
+            <button key={k} className="idea-chip" onClick={() => onSendTo(k)}>
+              {STORE[k].name}
+            </button>
+          ))}
+      </div>
+
+      <div className="toolbar" style={{ marginTop: 16 }}>
+        <button className="btn-ghost" onClick={onSkip}>Skip these</button>
+        <button className="btn-ghost" onClick={onCancel}>Decide later</button>
+      </div>
     </div>
   );
 }
