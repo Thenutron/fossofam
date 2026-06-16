@@ -5,7 +5,7 @@ import type { Item, Dinner, Expense, Household } from "@/db/schema";
 import {
   STORE, STORE_ORDER, ROUTE_PLAN, STAPLES, WEEKLY_TARGET,
   LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS,
-  routeStore,
+  routeStore, routeArea, AREA, AREAS,
 } from "@/lib/data";
 import {
   addItem, toggleItem, deleteItem, clearCheckedItems,
@@ -589,6 +589,10 @@ function ShoppingSection({
         <>
           {itemsByStore.filter((g) => g.key !== "online").map((g) => {
             const remaining = g.items.filter((i) => !i.done).length;
+            const byArea = AREAS
+              .map((a) => ({ area: a, items: g.items.filter((i) => routeArea(i.name) === a) }))
+              .filter((sub) => sub.items.length > 0);
+            const showAreaHeads = byArea.length > 1;
             return (
               <div className="store-group" key={g.key}>
                 <div className="store-head">
@@ -598,11 +602,21 @@ function ShoppingSection({
                   </span>
                   <span className="store-meta">{remaining}</span>
                 </div>
-                {g.items.map((it) => (
-                  <div className={"item" + (it.done ? " done" : "")} key={it.id}>
-                    <input type="checkbox" checked={it.done} onChange={(e) => onToggle(it.id, e.target.checked)} />
-                    <span className="item-name">{it.name}</span>
-                    <span className="item-x" onClick={() => onDelete(it.id)}>×</span>
+                {byArea.map((sub) => (
+                  <div className="area-group" key={sub.area}>
+                    {showAreaHeads && (
+                      <div className="area-head">
+                        <span className="area-icon">{AREA[sub.area].icon}</span>
+                        {AREA[sub.area].name}
+                      </div>
+                    )}
+                    {sub.items.map((it) => (
+                      <div className={"item" + (it.done ? " done" : "")} key={it.id}>
+                        <input type="checkbox" checked={it.done} onChange={(e) => onToggle(it.id, e.target.checked)} />
+                        <span className="item-name">{it.name}</span>
+                        <span className="item-x" onClick={() => onDelete(it.id)}>×</span>
+                      </div>
+                    ))}
                   </div>
                 ))}
                 {g.fallback && remaining > 0 && (

@@ -204,6 +204,16 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
   }
   .btn-ghost:hover { color: var(--ink); border-color: var(--ink-3); }
 
+  .area-group { margin-bottom: 10px; }
+  .area-group:last-of-type { margin-bottom: 2px; }
+  .area-head {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 11.5px; font-weight: 600; color: var(--ink-2);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin: 10px 0 4px; padding-left: 2px;
+  }
+  .area-head .area-icon { font-size: 14px; line-height: 1; }
+
   .store-group { margin-bottom: 18px; }
   .store-head {
     display: flex; align-items: center; justify-content: space-between;

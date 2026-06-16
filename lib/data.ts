@@ -64,6 +64,49 @@ export function routeStore(name: string): string {
   return "fred";
 }
 
+// ---- Aisle / area routing ----
+// Within each store, items are sub-grouped by area so you can sweep the
+// produce wall, then dairy case, then frozen, etc. Order below = walk order.
+export const AREAS = [
+  "produce", "meat", "dairy", "bakery", "frozen",
+  "pantry", "drinks", "household", "supplements", "other",
+] as const;
+export type Area = typeof AREAS[number];
+
+export const AREA: Record<Area, { name: string; icon: string }> = {
+  produce:     { name: "Produce",        icon: "🥬" },
+  meat:        { name: "Meat & seafood", icon: "🥩" },
+  dairy:       { name: "Dairy & eggs",   icon: "🥛" },
+  bakery:      { name: "Bakery",         icon: "🍞" },
+  frozen:      { name: "Frozen",         icon: "🧊" },
+  pantry:      { name: "Pantry & dry",   icon: "🥫" },
+  drinks:      { name: "Drinks",         icon: "🥤" },
+  household:   { name: "Household",      icon: "🧻" },
+  supplements: { name: "Supplements",    icon: "💊" },
+  other:       { name: "Other",          icon: "·"  },
+};
+
+// Order matters: first match wins. Snack/chip rule runs before bakery so
+// "tortilla chips" doesn't get misfiled with the wraps.
+const AREA_ROUTE: [RegExp, Area][] = [
+  [/apple|banana|watermelon|orange|cara cara|honeycrisp|berry|berries|grape|pear|peach|plum|mango|kiwi|pineapple|melon|\bfruit\b/i, "produce"],
+  [/kale|lettuce|salad|spinach|arugula|romaine|broccoli|cauliflower|carrot|potato|onion|garlic|pepper|tomato|lemon|lime|ginger|cilantro|parsley|mushroom|avocado|cucumber|zucchini|squash|green bean|corn|celery|sweet potato|herb/i, "produce"],
+  [/chip|cracker|cookie|snack|popcorn|pretzel/i, "pantry"],
+  [/chicken|beef|chuck roast|pork|bacon|sausage|salmon|tuna|mackerel|shrimp|shellfish|turkey|deli|hot dog|brisket|steak|\bground\b|\bfish\b/i, "meat"],
+  [/\bmilk\b|cheese|yogurt|butter|\bcream\b|sour cream|tillamook|kefir|\beggs?\b/i, "dairy"],
+  [/bread|wraps?|tortillas?|buns?|bagel|sourdough|cornbread|naan|pita/i, "bakery"],
+  [/frozen|ice cream|popsicle|tater tot/i, "frozen"],
+  [/coffee|tea|juice|soda|olipop|zevia|sparkling|kombucha|water bottle/i, "drinks"],
+  [/paper towel|toilet paper|soap|detergent|cleaner|foil|trash|ziploc|parchment|sponge|dish soap|laundry/i, "household"],
+  [/protein powder|vitamin|supplement|magnesium|electrolyte/i, "supplements"],
+  [/rice|pasta|noodle|beans|refried|sauce|oil|vinegar|flour|sugar|spice|salt|cereal|oats?|broth|stock|mac & cheese|goodles|peanut butter|jam|honey|syrup|vanilla|cinnamon|baking|canned?|tin\b|jar\b|feed\b/i, "pantry"],
+];
+
+export function routeArea(name: string): Area {
+  for (const [re, a] of AREA_ROUTE) if (re.test(name)) return a;
+  return "other";
+}
+
 // ---- Tap-to-add staples ----
 export const STAPLES = [
   "Coconut milk", "Raw milk", "Chuck roast", "Organic chicken (pasture eggs)", "Bananas (lots)",
