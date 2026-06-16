@@ -205,11 +205,17 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
   .btn-ghost:hover { color: var(--ink); border-color: var(--ink-3); }
 
   /* SHOP MODE */
-  .shop-mode-btn {
+  .shop-mode-btn,
+  .stock-btn {
     appearance: none; background: var(--surface-2); border: 1px solid var(--line);
     border-radius: 999px; padding: 6px 12px; font-size: 12.5px;
     font-family: var(--font); color: var(--ink-2); cursor: pointer;
     white-space: nowrap; -webkit-tap-highlight-color: transparent;
+  }
+  .stock-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+  .stock-btn {
+    background: var(--coral-bg); color: var(--coral-ink);
+    border-color: transparent; font-weight: 600;
   }
   .shop-mode-btn:hover { color: var(--ink); border-color: var(--ink-3); }
   .shop-mode-btn.on {

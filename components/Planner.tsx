@@ -90,7 +90,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   const [isPending, startTransition] = useTransition();
 
   // UI surface state
-  const [sheet, setSheet] = useState<"ai" | "import" | null>(null);
+  const [sheet, setSheet] = useState<"ai" | "import" | "stock" | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [activeRow, setActiveRow] = useState<number | null>(null);
@@ -308,7 +308,10 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
 
       {/* ============ THIS WEEK ============ */}
       <section className="card">
-        <h2>Week of {weekOfLabel()}</h2>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+          <h2>Week of {weekOfLabel()}</h2>
+          <button className="stock-btn" onClick={() => setSheet("stock")}>🛒 Stock list</button>
+        </div>
         <div>
           {dinners.map((d) => {
             const skipOpen = rowMenu?.dinnerId === d.id && rowMenu.type === "skip";
@@ -493,6 +496,41 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
                 })),
               ]);
               startTransition(() => applyPlanChanges(changes, additions, proposalId));
+              setSheet(null);
+            }}
+            onReject={(proposalId) => {
+              if (proposalId !== undefined) startTransition(() => rejectProposal(proposalId));
+              setSheet(null);
+            }}
+          />
+        </SheetOverlay>
+      )}
+
+      {sheet === "stock" && (
+        <SheetOverlay onClose={() => setSheet(null)}>
+          <PlanShoppingPanel
+            dinners={dinners}
+            items={items}
+            currentWeek={currentWeek}
+            onApply={(additions, proposalId) => {
+              const now = new Date();
+              setItems((p) => [
+                ...p,
+                ...additions.map((a, idx) => ({
+                  id: Date.now() + idx,
+                  name: a.name,
+                  store: a.store,
+                  done: false,
+                  cost: null,
+                  costAt: null,
+                  createdAt: now,
+                })),
+              ]);
+              // Reuse applyPlanChanges (empty changes, additions only) so the
+              // proposal gets marked applied + items persist via one action.
+              startTransition(() =>
+                applyPlanChanges([], additions.map((a) => ({ name: a.name, store: a.store })), proposalId),
+              );
               setSheet(null);
             }}
             onReject={(proposalId) => {
@@ -1444,6 +1482,131 @@ function RecipeImport({
             <button className="btn-ghost" onClick={reject}>Reject</button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Plan shopping (build list from this week's dinners) ---------- */
+type PlanShoppingAddition = { name: string; store: string; for_meal: string };
+type PlanShoppingResult = {
+  summary: string;
+  shopping_additions: PlanShoppingAddition[];
+  notes: string;
+};
+
+function PlanShoppingPanel({
+  dinners, items, currentWeek, onApply, onReject,
+}: {
+  dinners: Dinner[];
+  items: Item[];
+  currentWeek: number;
+  onApply: (additions: PlanShoppingAddition[], proposalId?: number) => void;
+  onReject: (proposalId?: number) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<PlanShoppingResult | null>(null);
+  const [proposalId, setProposalId] = useState<number | undefined>(undefined);
+  const [keep, setKeep] = useState<Record<number, boolean>>({});
+
+  useEffect(() => {
+    let canceled = false;
+    async function run() {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tool: "plan_shopping",
+            note: "",
+            dinners,
+            items,
+            currentWeek,
+          }),
+        });
+        const data = await res.json();
+        if (canceled) return;
+        if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+        const r = data.proposal as PlanShoppingResult;
+        setResult(r);
+        setProposalId(data.proposalId);
+        const k: Record<number, boolean> = {};
+        r.shopping_additions.forEach((_, i) => { k[i] = true; });
+        setKeep(k);
+      } catch (e) {
+        if (!canceled) setError(e instanceof Error ? e.message : "Unknown error");
+      } finally {
+        if (!canceled) setLoading(false);
+      }
+    }
+    run();
+    return () => { canceled = true; };
+    // Intentionally run once on mount with the snapshot props.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function apply() {
+    if (!result) return;
+    const additions = result.shopping_additions.filter((_, i) => keep[i]);
+    if (additions.length === 0) {
+      onReject(proposalId);
+      return;
+    }
+    onApply(additions, proposalId);
+  }
+
+  function reject() {
+    onReject(proposalId);
+  }
+
+  return (
+    <div>
+      <h2 className="sheet-h2">Stock the week</h2>
+      {loading && (
+        <div className="note">Reading the dinner plan + your existing list…</div>
+      )}
+      {error && !loading && (
+        <div className="hint" style={{ color: "var(--coral-ink, #c4452a)" }}>{error}</div>
+      )}
+      {result && !loading && (
+        <>
+          <div className="note" style={{ marginBottom: 10 }}>{result.summary}</div>
+          {result.notes && (
+            <div className="last-week-banner over" style={{ marginBottom: 12 }}>
+              <i className="ti ti-info-circle" />
+              <div>{result.notes}</div>
+            </div>
+          )}
+          {result.shopping_additions.length === 0 ? (
+            <div className="empty" style={{ padding: "14px 0" }}>You&apos;re already stocked for the week.</div>
+          ) : (
+            <>
+              <div className="sheet-h3">Add ({Object.values(keep).filter(Boolean).length} of {result.shopping_additions.length})</div>
+              {result.shopping_additions.map((a, i) => (
+                <label key={i} className={"receipt-row" + (keep[i] ? "" : " off")}>
+                  <input
+                    type="checkbox"
+                    checked={!!keep[i]}
+                    onChange={() => setKeep((p) => ({ ...p, [i]: !p[i] }))}
+                  />
+                  <div className="rr-name">
+                    {a.name}
+                    <div className="rr-sub">→ {a.store} · for {a.for_meal}</div>
+                  </div>
+                </label>
+              ))}
+              <div className="toolbar" style={{ marginTop: 16 }}>
+                <button className="btn-primary" onClick={apply}>
+                  Add {Object.values(keep).filter(Boolean).length} to list
+                </button>
+                <button className="btn-ghost" onClick={reject}>Reject</button>
+              </div>
+            </>
+          )}
+        </>
       )}
     </div>
   );

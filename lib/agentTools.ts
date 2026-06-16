@@ -13,7 +13,7 @@
 
 import { STORE_ORDER } from "./data";
 
-export type AgentToolName = "modify_week" | "get_recipe" | "import_recipe" | "parse_receipt";
+export type AgentToolName = "modify_week" | "get_recipe" | "import_recipe" | "parse_receipt" | "plan_shopping";
 
 export type AgentTool = {
   name: AgentToolName;
@@ -291,7 +291,49 @@ const parseReceiptTool: AgentTool = {
   },
 };
 
-export const AGENT_TOOLS: AgentTool[] = [modifyWeekTool, getRecipeTool, importRecipeTool, parseReceiptTool];
+// --- plan_shopping ---
+// Read the family's current 7-day dinner plan and propose the items they
+// need to BUY to actually make all those meals. Skips dupes and pantry
+// staples. Doesn't touch the dinners themselves — read-only on the plan.
+const planShoppingTool: AgentTool = {
+  name: "plan_shopping",
+  description:
+    "Read the family's current 7-day dinner plan + the existing shopping list, and propose the items they need to BUY this week to make all the dinners happen. Don't change the dinners. Don't propose items already on the list. Skip pantry staples (salt/pepper/oil/flour/sugar/basic spices/butter/garlic powder/eggs/milk unless quantity is high). Focus on meat, produce, specialty items, and anything explicitly mentioned in a dinner's note.",
+  input_schema: {
+    type: "object",
+    properties: {
+      summary: {
+        type: "string",
+        description: "1-2 sentences in the family's tone — what you found across the dinners.",
+      },
+      shopping_additions: {
+        type: "array",
+        description: "Specific items the family needs to buy. Quantity matters — '2 lbs ground beef' beats just 'ground beef'.",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            store: { type: "string", enum: STORE_ORDER },
+            for_meal: {
+              type: "string",
+              description: "Which day(s) this is for, terse — e.g. 'Sun crock' / 'Tue tacos + Wed burgers'. Helps the family understand why it's listed.",
+            },
+          },
+          required: ["name", "store", "for_meal"],
+          additionalProperties: false,
+        },
+      },
+      notes: {
+        type: "string",
+        description: "Caveats — meals you couldn't decode, items you deliberately skipped as 'probably already have', etc. Empty if clean.",
+      },
+    },
+    required: ["summary", "shopping_additions", "notes"],
+    additionalProperties: false,
+  },
+};
+
+export const AGENT_TOOLS: AgentTool[] = [modifyWeekTool, getRecipeTool, importRecipeTool, parseReceiptTool, planShoppingTool];
 
 export function getTool(name: AgentToolName): AgentTool {
   const tool = AGENT_TOOLS.find((t) => t.name === name);
@@ -345,6 +387,12 @@ export type ImportRecipeProposal = {
   family_fit_warnings: string;
 };
 
+export type PlanShoppingProposal = {
+  summary: string;
+  shopping_additions: { name: string; store: string; for_meal: string }[];
+  notes: string;
+};
+
 export type ReceiptProposal = {
   store: string;
   total: number;
@@ -374,4 +422,5 @@ export type ToolOutput =
   | { tool: "modify_week"; data: ModifyWeekProposal }
   | { tool: "get_recipe"; data: RecipeProposal }
   | { tool: "import_recipe"; data: ImportRecipeProposal }
-  | { tool: "parse_receipt"; data: ReceiptProposal };
+  | { tool: "parse_receipt"; data: ReceiptProposal }
+  | { tool: "plan_shopping"; data: PlanShoppingProposal };

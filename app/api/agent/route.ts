@@ -18,7 +18,7 @@ import { agentProposals } from "@/db/schema";
 import { FAMILY_NARRATIVE, TONE } from "@/lib/familyProfile";
 import { STORE, STORE_ORDER, ROUTE_PLAN, STAPLES, LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS } from "@/lib/data";
 import { llm, LlmError, type LlmImageMediaType } from "@/lib/llm";
-import { getTool, type AgentToolName, type ModifyWeekProposal, type RecipeProposal, type ReceiptProposal } from "@/lib/agentTools";
+import { getTool, type AgentToolName, type ModifyWeekProposal, type RecipeProposal, type ReceiptProposal, type PlanShoppingProposal } from "@/lib/agentTools";
 import type { Dinner, Item } from "@/db/schema";
 
 export const runtime = "nodejs";
@@ -163,6 +163,22 @@ ${req.note?.trim() || "(none)"}
 
 Extract the actual recipe from the page text above. Ignore the blog narrative, ads, comments, related-recipe links. Suggest a day to slot it into based on its effort, propose shopping_additions only for ingredients the family probably doesn't already have, and flag any family_fit_warnings (especially shellfish for Kait/Revs).`;
   }
+  if (req.tool === "plan_shopping") {
+    const dinners = req.dinners ?? [];
+    const items = req.items ?? [];
+    const cw = req.currentWeek ?? 1;
+    return `# Current week
+Cycle week: ${cw} of 3 (${cw === 3 ? "bulk week" : cw === 2 ? "feed week" : "normal week"})
+
+# Current 7-day dinner plan
+${dinners.map((d) => `- ${d.day} [${d.tag}/${d.label}]${d.skip ? " (SKIPPED — ignore this day)" : ""}: ${d.meal || "(blank — ignore this day)"}${d.note ? " — note: " + d.note : ""}`).join("\n")}
+
+# Already on the shopping list (DO NOT propose duplicates of these)
+${items.length === 0 ? "(list is empty)" : items.map((i) => `- ${i.name}`).join("\n")}
+
+# Task
+For each non-skipped, non-blank dinner above, list everything the family needs to BUY to make it. Output via plan_shopping. Skip dupes against the existing list. Skip basic pantry items (oil, salt, pepper, common spices, flour, sugar, butter, garlic powder; eggs/milk only if a meal uses a big quantity). Use the store enum's keys for the 'store' field (e.g. 'fred', 'grocout', 'sprouts'). Use 'for_meal' to give the family a 1-line reason (e.g. 'Sun crock', 'Tue tacos + Wed burgers').`;
+  }
   if (req.tool === "parse_receipt") {
     const items = req.items ?? [];
     return `# Cart (what's currently on the family's shopping list)
@@ -271,7 +287,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const proposalData = toolUse.input as ModifyWeekProposal | RecipeProposal | ReceiptProposal;
+    const proposalData = toolUse.input as ModifyWeekProposal | RecipeProposal | ReceiptProposal | PlanShoppingProposal;
 
     // Log to agent_proposals (best-effort — don't block the response on it).
     let proposalId: number | undefined;
