@@ -231,7 +231,9 @@ ${items.length === 0
 # Task
 For each non-skipped, non-blank dinner above, list everything the family needs to BUY to make it. Output via plan_shopping. Skip dupes against the existing list. Skip basic pantry items (oil, salt, pepper, common spices, flour, sugar, butter, garlic powder; eggs/milk only if a meal uses a big quantity). Use the store enum's keys for the 'store' field (e.g. 'fred', 'grocout', 'sprouts'). Use 'for_meal' to give the family a 1-line reason (e.g. 'Sun crock', 'Tue tacos + Wed burgers').
 
-For est_cost: ground in any 'last paid' prices above when an analogous item exists, otherwise estimate from typical PNW grocery prices (organic where the family prefers organic — meat, dairy, produce). Sum your est_costs into estimated_weekly_cost (round to whole dollars). Compare against the $215 target → budget_status. If over: propose a scrounge_suggestion day swap in the family's voice.`;
+ORGANIC DEFAULT: Every shopping_addition name MUST be prefixed with 'Organic' when applicable — produce, meat, poultry, fish, dairy, eggs, and most pantry items. Examples: 'Organic ground beef', 'Organic honeycrisp apples', 'Organic kale', 'Organic chicken breast', 'Organic salmon'. Only skip the 'Organic' prefix when (a) it's a specific non-organic brand the family already buys (Goodles mac & cheese, Tillamook block cheese — they're already premium), or (b) the item genuinely isn't sold organic. When in doubt, prefix Organic.
+
+For est_cost: ground in any 'last paid' prices above when an analogous item exists, otherwise estimate from typical PNW grocery prices at the ORGANIC price point. Sum your est_costs into estimated_weekly_cost (round to whole dollars). Compare against the $215 target → budget_status. If over: propose a scrounge_suggestion day swap in the family's voice.`;
   }
   if (req.tool === "parse_receipt") {
     const items = req.items ?? [];

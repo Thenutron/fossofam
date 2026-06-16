@@ -132,7 +132,7 @@ export const PEOPLE: Person[] = [
 ];
 
 export const VALUES = [
-  "organic where it matters (protein especially)",
+  "ORGANIC BY DEFAULT — produce, meat, dairy, eggs, pantry staples. Specifically prefix shopping items with 'Organic' (e.g. 'Organic ground beef', 'Organic apples'). Non-organic only when (a) it's a specific brand the family already buys (like Goodles mac & cheese) or (b) organic isn't sold at the routed store and the item is something the family will accept conventional for (rare).",
   "clean eating, low-waste",
   "no plastic where possible — prefer glass packaging",
   "kill many birds with one stone (efficiency mindset)",
