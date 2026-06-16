@@ -232,8 +232,12 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   function doCloseWeek() {
     const weekly = expenses.filter((e) => e.kind !== "bulk").reduce((s, e) => s + e.amount, 0);
     if (weekly === 0 && !confirm("No weekly expenses logged yet. Close out anyway?")) return;
-    if (!confirm(`Snapshot this week's $${Math.round(weekly)} as last week and clear for a fresh week?`)) return;
-    setHousehold((p) => ({ ...p, lastWeekTotal: weekly }));
+    if (!confirm(`Snapshot this week's $${Math.round(weekly)} as last week and roll the cycle to the next week?`)) return;
+    setHousehold((p) => ({
+      ...p,
+      lastWeekTotal: weekly,
+      currentWeek: p.currentWeek === 3 ? 1 : p.currentWeek + 1,
+    }));
     setExpenses([]);
     setDinners((p) => p.map((d) => ({ ...d, skip: false, skipReason: "" })));
     startTransition(() => closeOutWeek());

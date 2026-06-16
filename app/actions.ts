@@ -202,10 +202,18 @@ export async function setCurrentWeek(week: number) {
 }
 
 export async function closeOutWeek() {
-  // snapshot weekly (non-bulk) total into lastWeekTotal, clear expenses, un-skip days
+  // snapshot weekly (non-bulk) total into lastWeekTotal, clear expenses,
+  // un-skip days, AND advance the 1→2→3→1 cycle so the carousel + budget
+  // reflect the new week's cadence (feed-week / bulk-week / normal).
   const exp = await db.select().from(expenses);
   const weekly = exp.filter((e) => e.kind !== "bulk").reduce((s, e) => s + e.amount, 0);
-  await db.update(household).set({ lastWeekTotal: weekly, updatedAt: new Date() }).where(eq(household.id, 1));
+  const [hh] = await db.select().from(household).where(eq(household.id, 1));
+  const cw = hh?.currentWeek ?? 1;
+  const nextWeek = cw === 3 ? 1 : cw + 1;
+  await db
+    .update(household)
+    .set({ lastWeekTotal: weekly, currentWeek: nextWeek, updatedAt: new Date() })
+    .where(eq(household.id, 1));
   await db.delete(expenses);
   await db.update(dinners).set({ skip: false, skipReason: "" });
   revalidatePath("/");
