@@ -3,7 +3,7 @@
 import { useState, useTransition, useEffect, useRef } from "react";
 import type { Item, Dinner, Expense, Household } from "@/db/schema";
 import {
-  STORE, STORE_ORDER, ROUTE_PLAN, STAPLES, WEEKLY_TARGET,
+  STORE, STORE_ORDER, ROUTE_PLAN, STAPLES, WEEKLY_TARGET, WEEKS,
   LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS,
   routeStore, routeArea, AREA, AREAS,
 } from "@/lib/data";
@@ -63,6 +63,28 @@ function datesForCurrentWeek(now: Date = new Date()): Record<string, Date> {
 
 function isSameYMD(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+// Sunday of the calendar week containing `date`, offset by N full weeks.
+function sundayOfWeek(date: Date, weekOffset: number = 0): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay() + weekOffset * 7);
+  return d;
+}
+
+function weekRangeLabel(start: Date): string {
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  const s = start.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const e = end.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${s} – ${e}`;
+}
+
+// Cycle is 1→2→3→1. Given the user's current cycle position, what cycle
+// position is N weeks ahead?
+function cyclePosFor(currentCyclePos: number, weeksAhead: number): number {
+  return ((currentCyclePos - 1 + weeksAhead) % 3) + 1;
 }
 
 function tagToKind(tag: string) {
@@ -297,6 +319,8 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
           </div>
         )}
       </header>
+
+      <WeekCarousel currentCyclePos={currentWeek} />
 
       {/* ============ TONIGHT + TOMORROW ============ */}
       <section className="card">
@@ -572,6 +596,40 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
           />
         </SheetOverlay>
       )}
+    </div>
+  );
+}
+
+/* ---------- Week carousel ---------- */
+// Read-only summary of the current calendar week + the next four. Shows
+// where the user is in the 1→2→3 cycle (normal / feed / bulk), the budget
+// for that week, and a one-liner note. Tapping cards is a no-op for now —
+// purely informational so the family can see what's coming.
+function WeekCarousel({ currentCyclePos }: { currentCyclePos: number }) {
+  const now = new Date();
+  const cards = Array.from({ length: 5 }, (_, offset) => {
+    const start = sundayOfWeek(now, offset);
+    const cyclePos = cyclePosFor(currentCyclePos, offset);
+    const meta = WEEKS.find((w) => w.n === cyclePos) ?? WEEKS[0];
+    const tagClass = cyclePos === 3 ? "wc-bulk" : cyclePos === 2 ? "wc-feed" : "wc-normal";
+    const tagLabel = cyclePos === 3 ? "Bulk week" : cyclePos === 2 ? "Feed week" : "Normal week";
+    const heading =
+      offset === 0 ? "This week" :
+      offset === 1 ? "Next week" :
+      `In ${offset} weeks`;
+    return { offset, start, cyclePos, meta, tagClass, tagLabel, heading };
+  });
+  return (
+    <div className="week-carousel" aria-label="Upcoming weeks">
+      {cards.map((c) => (
+        <div key={c.offset} className={"wc-card" + (c.offset === 0 ? " wc-current" : "")}>
+          <div className="wc-label">{c.heading}</div>
+          <div className="wc-dates">{weekRangeLabel(c.start)}</div>
+          <div className={"wc-tag " + c.tagClass}>{c.tagLabel}</div>
+          <div className="wc-budget">{c.meta.budget}</div>
+          <div className="wc-desc">{c.meta.desc}</div>
+        </div>
+      ))}
     </div>
   );
 }
