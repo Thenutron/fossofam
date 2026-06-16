@@ -1296,34 +1296,30 @@ function ShoppingSection({
   const [elsewhereOpen, setElsewhereOpen] = useState(false);
   const userPickedStoreRef = useRef(false);
 
+  // Only restore from localStorage if the user EXPLICITLY picked an anchor
+  // before. The user-picked flag prevents stale auto-default values (from
+  // older "store with most items" behavior) from sticking forever.
   useEffect(() => {
     try {
       const saved = localStorage.getItem("fossofam-active-store");
-      if (saved && STORE[saved]) {
+      const userPicked = localStorage.getItem("fossofam-active-store-user-picked") === "1";
+      if (saved && STORE[saved] && userPicked) {
         setActiveStore(saved);
         userPickedStoreRef.current = true;
       }
     } catch {}
   }, []);
 
-  // If the user hasn't explicitly picked a store, default to the one with the
-  // most active items. Keeps a single source of truth without surprising the
-  // user after they pick.
+  // Default to Fred Meyer (family's known primary anchor) when no explicit
+  // pick exists. Reads/writes nothing to localStorage so refreshes always
+  // come back to fred unless the user actively picked otherwise.
   useEffect(() => {
     if (userPickedStoreRef.current) return;
-    if (!items.length) return;
-    const counts: Record<string, number> = {};
-    for (const i of items) {
-      if (i.done) continue;
-      if (i.store === "online") continue;
-      counts[i.store] = (counts[i.store] || 0) + 1;
-    }
-    const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
-    if (top && top !== activeStore) setActiveStore(top);
-  }, [items, activeStore]);
+    if (!activeStore) setActiveStore("fred");
+  }, [activeStore]);
 
-  // Persist whenever activeStore changes (covers both auto-default and explicit
-  // user pick). Other surfaces (PlanShoppingPanel) read from this key.
+  // Persist active store to localStorage when activeStore changes — but
+  // only flagged as user-picked when pickStore() was the trigger.
   useEffect(() => {
     if (!activeStore) return;
     try { localStorage.setItem("fossofam-active-store", activeStore); } catch {}
@@ -1332,6 +1328,7 @@ function ShoppingSection({
   function pickStore(key: string) {
     setActiveStore(key);
     userPickedStoreRef.current = true;
+    try { localStorage.setItem("fossofam-active-store-user-picked", "1"); } catch {}
   }
 
   // Overflow sheet — surfaces leftovers at the active store after a trip

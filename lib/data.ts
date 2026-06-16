@@ -48,7 +48,10 @@ export const ROUTE_PLAN: { key: string; target: number; fallback: string | null;
 const ROUTE: [RegExp, string][] = [
   [/coffee.*mold|mold.*coffee|sprouts coffee/i, "sprouts"],
   [/decaf|bible study coffee/i, "grocout"],
-  [/snack|cookie|pie crust|baking|flour|sugar|brown sugar|chocolate chip|brownie|muffin|vanilla|cinnamon|apple.*pie|crisp/i, "grocout"],
+  // \bcrisp\b so "honeycrisp" apples don't get pulled into the dessert bucket.
+  // apple/fruit/berry crisp the dessert still routes correctly because there
+  // the word "crisp" is its own token.
+  [/snack|cookie|pie crust|baking|flour|sugar|brown sugar|chocolate chip|brownie|muffin|vanilla|cinnamon|apple.*pie|\bcrisp\b/i, "grocout"],
   [/raw milk.*2 gallon|2 gallon.*raw|raw milk pickup/i, "rawmilk"],
   [/raw milk|raw\.milk/i, "coop"],
   [/myshan|grocery outlet milk|non\.?raw milk/i, "grocout"],
