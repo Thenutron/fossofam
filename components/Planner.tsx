@@ -96,6 +96,53 @@ function tagToKind(tag: string) {
   return "dinner";
 }
 
+// Share a chunk of text using the native iOS share sheet when available
+// (iMessage, Mail, etc.), falling back to clipboard + alert. Used by the
+// 💬 buttons across the app so Knute + Kait can ping each other quickly.
+async function shareText(text: string) {
+  try {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      await navigator.share({ text });
+      return;
+    }
+  } catch {
+    // user dismissed share sheet or share unavailable — fall through to copy
+  }
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      await navigator.clipboard.writeText(text);
+      alert("Copied:\n\n" + text);
+      return;
+    }
+  } catch {
+    // no clipboard either — show the text so user can copy by hand
+  }
+  alert(text);
+}
+
+function recipeAsText(r: Recipe): string {
+  const lines: string[] = [];
+  lines.push(r.title);
+  lines.push(`🍽 ${r.servings} · ⏱ ${r.prep_time} prep · 🔥 ${r.cook_time}`);
+  if (r.when_to_start) lines.push(`Start by: ${r.when_to_start}`);
+  lines.push("");
+  lines.push("INGREDIENTS");
+  for (const i of r.ingredients) {
+    lines.push(`- ${i.amount} ${i.item}${i.note ? ` (${i.note})` : ""}`);
+  }
+  lines.push("");
+  lines.push("STEPS");
+  r.steps.forEach((s, idx) => {
+    lines.push(`${idx + 1}. ${s.replace(/^\s*(?:step\s*)?\d+[.)]\s*/i, "")}`);
+  });
+  if (r.tips && r.tips.length) {
+    lines.push("");
+    lines.push("TIPS");
+    for (const t of r.tips) lines.push(`- ${t}`);
+  }
+  return lines.join("\n");
+}
+
 type Recipe = {
   title: string;
   servings: string;
@@ -560,6 +607,13 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
                   {tonightRecipe?.meal === today.meal && tonightRecipe.recipe ? "▾ Hide recipe" : "📖 Show recipe"}
                 </button>
                 <button className="swap-btn" onClick={() => setTab("week")}>↺ Swap or skip</button>
+                <button
+                  className="swap-btn"
+                  onClick={() => shareText(
+                    `Tonight: ${today.meal}${today.label ? ` (${today.label})` : ""}${today.note ? `\n${today.note}` : ""}`
+                  )}
+                  aria-label="Share tonight"
+                >💬 Share</button>
               </div>
 
               {tonightRecipe && tonightRecipe.meal === today.meal && (
@@ -1734,7 +1788,19 @@ function ShoppingSection({
                               onFocus={(e) => e.target.select()}
                             />
                           )}
-                          {!shopMode && <span className="item-x" onClick={() => onDelete(it.id)}>×</span>}
+                          {!shopMode && (
+                            <>
+                              <button
+                                className="item-share"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  shareText(`Hey do we have ${it.name}?`);
+                                }}
+                                aria-label="Ask if we have this"
+                              >💬</button>
+                              <span className="item-x" onClick={() => onDelete(it.id)}>×</span>
+                            </>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -2136,8 +2202,14 @@ function RecipeSheet({
               <span>🔥 {displayed.cook_time}</span>
               {cached && !override && <span className="cached-badge">saved</span>}
               {override && <span className="cached-badge" style={{ background: "var(--amber-bg)", color: "var(--amber-ink)" }}>modified</span>}
-              <button className="btn-ghost" style={{ marginLeft: "auto", fontSize: 12, padding: "4px 10px" }} onClick={onRegenerate}>
-                🔄 New version
+              <button
+                className="btn-ghost"
+                style={{ marginLeft: "auto", fontSize: 12, padding: "4px 10px" }}
+                onClick={() => displayed && shareText(recipeAsText(displayed))}
+                aria-label="Share recipe"
+              >💬 Share</button>
+              <button className="btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={onRegenerate}>
+                🔄 New
               </button>
             </div>
 
