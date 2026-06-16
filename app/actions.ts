@@ -34,6 +34,17 @@ export async function clearCheckedItems() {
   revalidatePath("/");
 }
 
+// Updates an item's last-paid price. Pass null to clear.
+// This is the per-item ledger that drives the shop-mode total AND seeds
+// future budget estimates in the agent.
+export async function updateItemCost(id: number, cost: number | null) {
+  await db
+    .update(items)
+    .set({ cost, costAt: cost === null ? null : new Date() })
+    .where(eq(items.id, id));
+  revalidatePath("/");
+}
+
 // ---- Dinners ----
 export async function getDinners() {
   const rows = await db.select().from(dinners).orderBy(dinners.sortOrder);

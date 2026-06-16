@@ -8,7 +8,7 @@ import {
   routeStore, routeArea, AREA, AREAS,
 } from "@/lib/data";
 import {
-  addItem, toggleItem, deleteItem, clearCheckedItems,
+  addItem, toggleItem, deleteItem, clearCheckedItems, updateItemCost,
   updateDinnerMeal, updateDinnerSlot, setDinnerSkip,
   addExpense, deleteExpense, setCurrentWeek, closeOutWeek, clearLastWeek,
   getAllState, applyPlanChanges, rejectProposal, applyImportedRecipe,
@@ -140,7 +140,7 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
     const trimmed = name.trim();
     if (!trimmed) return;
     const s = store === "auto" ? routeStore(trimmed) : store;
-    const temp: Item = { id: Date.now(), name: trimmed, store: s, done: false, createdAt: new Date() };
+    const temp: Item = { id: Date.now(), name: trimmed, store: s, done: false, cost: null, costAt: null, createdAt: new Date() };
     setItems((p) => [...p, temp]);
     startTransition(() => addItem(trimmed, store));
   }
@@ -155,6 +155,10 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
   function doClearChecked() {
     setItems((p) => p.filter((i) => !i.done));
     startTransition(() => clearCheckedItems());
+  }
+  function doUpdateItemCost(id: number, cost: number | null) {
+    setItems((p) => p.map((i) => (i.id === id ? { ...i, cost, costAt: cost === null ? null : new Date() } : i)));
+    startTransition(() => updateItemCost(id, cost));
   }
   function doUpdateMeal(id: number, meal: string) {
     setDinners((p) => p.map((d) => (d.id === id ? { ...d, meal } : d)));
@@ -395,10 +399,13 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
         active={active}
         itemsByStore={itemsByStore}
         onlineActive={onlineActive}
+        currentWeek={currentWeek}
         onAddItem={doAddItem}
         onToggle={doToggle}
         onDelete={doDelete}
         onClearChecked={doClearChecked}
+        onUpdateCost={doUpdateItemCost}
+        onLogTrip={(name, amount, kind) => doAddExpense(name, amount, kind)}
         staplesOpen={staplesOpen}
         setStaplesOpen={setStaplesOpen}
       />
@@ -446,6 +453,8 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
                   name: a.name,
                   store: a.store,
                   done: false,
+                  cost: null,
+                  costAt: null,
                   createdAt: new Date(),
                 })),
               ]);
@@ -476,6 +485,8 @@ export default function Planner({ initialItems, initialDinners, initialExpenses,
                   name: a.name,
                   store: a.store,
                   done: false,
+                  cost: null,
+                  costAt: null,
                   createdAt: new Date(),
                 })),
               ]);
@@ -539,49 +550,140 @@ function DinnerSpotlight({
 }
 
 /* ---------- Shopping ---------- */
+// Per-item cost is persisted on the items table (item.cost, item.costAt).
+// Shop mode is a *view* — it surfaces the $ field next to each row and a
+// running trip total. The data itself is durable: next week's "Apples"
+// row comes pre-filled with the last price, and the agent can ground its
+// budget proposals in real receipt numbers.
 function ShoppingSection({
-  items, active, itemsByStore, onlineActive,
-  onAddItem, onToggle, onDelete, onClearChecked,
+  items, active, itemsByStore, onlineActive, currentWeek,
+  onAddItem, onToggle, onDelete, onClearChecked, onUpdateCost, onLogTrip,
   staplesOpen, setStaplesOpen,
 }: {
   items: Item[];
   active: Item[];
   itemsByStore: { key: string; store: typeof STORE[string]; target: number; fallback: string | null; items: Item[] }[];
   onlineActive: Item[];
+  currentWeek: number;
   onAddItem: (name: string, store: string) => void;
   onToggle: (id: number, done: boolean) => void;
   onDelete: (id: number) => void;
   onClearChecked: () => void;
+  onUpdateCost: (id: number, cost: number | null) => void;
+  onLogTrip: (name: string, amount: number, kind: string) => void;
   staplesOpen: boolean;
   setStaplesOpen: (v: boolean | ((prev: boolean) => boolean)) => void;
 }) {
   const [val, setVal] = useState("");
+  const [shopMode, setShopMode] = useState(false);
+  // Local edit buffer keyed by item id. Only used while the field is being
+  // edited; on blur we persist to the DB via onUpdateCost.
+  const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
+
+  // Persist shop-mode toggle only (cheap; nice to survive a refresh).
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("fossofam-shop-mode") === "1") setShopMode(true);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem("fossofam-shop-mode", shopMode ? "1" : "0"); } catch {}
+  }, [shopMode]);
+
+  // Trip total = sum of cost over items currently *in the cart* (done=true).
+  // Editing a price doesn't add to the total; checking the item does. This
+  // matches the natural shop flow: enter price → tap into cart → next item.
+  const tripTotal = items.reduce((s, i) => (i.done && i.cost ? s + i.cost : s), 0);
+  const tripItemCount = items.filter((i) => i.done && i.cost && i.cost > 0).length;
+
   function submit() {
     if (!val.trim()) return;
     onAddItem(val, "auto");
     setVal("");
   }
+
+  function commitPrice(id: number) {
+    const raw = priceDraft[id];
+    if (raw === undefined) return;
+    const trimmed = raw.trim();
+    const parsed = trimmed === "" ? null : parseFloat(trimmed);
+    if (parsed !== null && (isNaN(parsed) || parsed < 0)) {
+      setPriceDraft((p) => { const { [id]: _, ...rest } = p; return rest; });
+      return;
+    }
+    onUpdateCost(id, parsed);
+    setPriceDraft((p) => { const { [id]: _, ...rest } = p; return rest; });
+  }
+
+  function priceFor(item: Item): string {
+    if (priceDraft[item.id] !== undefined) return priceDraft[item.id];
+    return item.cost == null ? "" : String(item.cost);
+  }
+
+  function logTrip() {
+    if (tripTotal <= 0) {
+      alert("Check items off as you grab them — total comes from items in the cart.");
+      return;
+    }
+    // Default name: store with the most checked items in the cart.
+    const storesByCount: Record<string, number> = {};
+    for (const i of items) {
+      if (!i.done || !i.cost || i.cost <= 0) continue;
+      storesByCount[i.store] = (storesByCount[i.store] || 0) + 1;
+    }
+    const topStoreKey = Object.entries(storesByCount).sort((a, b) => b[1] - a[1])[0]?.[0];
+    const defaultName = topStoreKey ? STORE[topStoreKey].name : "Shopping trip";
+    const name = prompt(`Log $${tripTotal.toFixed(2)} as:`, defaultName);
+    if (name === null) return;
+    const kind = currentWeek === 3 ? "bulk" : "weekly";
+    onLogTrip(name.trim() || defaultName, Math.round(tripTotal * 100) / 100, kind);
+    setShopMode(false);
+  }
+
   return (
-    <section className="card">
-      <h2>Shopping</h2>
-      <div className="add-row">
-        <input
-          className="txt"
-          value={val}
-          onChange={(e) => setVal(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-          placeholder="Add item"
-        />
-        <button className="btn-primary" onClick={submit}>Add</button>
-      </div>
-      <div className="dash-quickadd">
-        <button className="idea-chip" onClick={() => setStaplesOpen((v) => !v)}>
-          {staplesOpen ? "− staples" : "+ staples"}
+    <section className={"card" + (shopMode ? " shop-on" : "")}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+        <h2>Shopping</h2>
+        <button
+          className={"shop-mode-btn" + (shopMode ? " on" : "")}
+          onClick={() => setShopMode((v) => !v)}
+        >
+          {shopMode ? "✕ exit shop" : "🛒 shop mode"}
         </button>
-        {staplesOpen && STAPLES.slice(0, 10).map((s) => (
-          <button key={s} className="idea-chip" onClick={() => onAddItem(s, "auto")}>+ {s}</button>
-        ))}
       </div>
+
+      {shopMode && (
+        <div className="shop-mode-bar">
+          <div className="smb-totals">
+            <div className="smb-total">${tripTotal.toFixed(2)}</div>
+            <div className="smb-count">{tripItemCount} {tripItemCount === 1 ? "item" : "items"} in cart</div>
+          </div>
+          <button className="btn-primary smb-log" onClick={logTrip}>Log trip</button>
+        </div>
+      )}
+
+      {!shopMode && (
+        <>
+          <div className="add-row">
+            <input
+              className="txt"
+              value={val}
+              onChange={(e) => setVal(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+              placeholder="Add item"
+            />
+            <button className="btn-primary" onClick={submit}>Add</button>
+          </div>
+          <div className="dash-quickadd">
+            <button className="idea-chip" onClick={() => setStaplesOpen((v) => !v)}>
+              {staplesOpen ? "− staples" : "+ staples"}
+            </button>
+            {staplesOpen && STAPLES.slice(0, 10).map((s) => (
+              <button key={s} className="idea-chip" onClick={() => onAddItem(s, "auto")}>+ {s}</button>
+            ))}
+          </div>
+        </>
+      )}
 
       {items.length === 0 ? (
         <div className="empty" style={{ marginTop: 8 }}>All stocked.</div>
@@ -593,6 +695,7 @@ function ShoppingSection({
               .map((a) => ({ area: a, items: g.items.filter((i) => routeArea(i.name) === a) }))
               .filter((sub) => sub.items.length > 0);
             const showAreaHeads = byArea.length > 1;
+            const storeCartSubtotal = g.items.reduce((s, it) => (it.done && it.cost ? s + it.cost : s), 0);
             return (
               <div className="store-group" key={g.key}>
                 <div className="store-head">
@@ -600,7 +703,12 @@ function ShoppingSection({
                     <span className="store-swatch" style={{ background: g.store.color }} />
                     {g.store.name}
                   </span>
-                  <span className="store-meta">{remaining}</span>
+                  <span className="store-meta">
+                    {shopMode && storeCartSubtotal > 0 && (
+                      <span style={{ marginRight: 8, fontWeight: 600, color: "var(--ink)" }}>${storeCartSubtotal.toFixed(2)}</span>
+                    )}
+                    {remaining}
+                  </span>
                 </div>
                 {byArea.map((sub) => (
                   <div className="area-group" key={sub.area}>
@@ -614,12 +722,27 @@ function ShoppingSection({
                       <div className={"item" + (it.done ? " done" : "")} key={it.id}>
                         <input type="checkbox" checked={it.done} onChange={(e) => onToggle(it.id, e.target.checked)} />
                         <span className="item-name">{it.name}</span>
-                        <span className="item-x" onClick={() => onDelete(it.id)}>×</span>
+                        {shopMode && (
+                          <input
+                            className="item-price"
+                            type="number"
+                            inputMode="decimal"
+                            step="0.01"
+                            min="0"
+                            placeholder="$"
+                            value={priceFor(it)}
+                            onChange={(e) => setPriceDraft((p) => ({ ...p, [it.id]: e.target.value }))}
+                            onBlur={() => commitPrice(it.id)}
+                            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                            onFocus={(e) => e.target.select()}
+                          />
+                        )}
+                        {!shopMode && <span className="item-x" onClick={() => onDelete(it.id)}>×</span>}
                       </div>
                     ))}
                   </div>
                 ))}
-                {g.fallback && remaining > 0 && (
+                {g.fallback && remaining > 0 && !shopMode && (
                   <div className="gf-mini" style={{ marginTop: 6 }}>
                     ↳ {STORE[g.fallback].name}
                   </div>
@@ -627,7 +750,7 @@ function ShoppingSection({
               </div>
             );
           })}
-          {onlineActive.length > 0 && (
+          {onlineActive.length > 0 && !shopMode && (
             <div className="dash-online-cta">
               <i className="ti ti-world" />
               <div className="txt-wrap">
@@ -641,9 +764,11 @@ function ShoppingSection({
               }}>Draft ↗</button>
             </div>
           )}
-          <div className="toolbar">
-            <button className="btn-ghost" onClick={onClearChecked}>Clear checked</button>
-          </div>
+          {!shopMode && (
+            <div className="toolbar">
+              <button className="btn-ghost" onClick={onClearChecked}>Clear checked</button>
+            </div>
+          )}
         </>
       )}
     </section>

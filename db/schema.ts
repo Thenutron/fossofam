@@ -8,12 +8,17 @@ export const household = pgTable("household", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// Out-of / shopping items. store is the routed store key.
+// Out-of / shopping items. `store` is the routed store key.
+// `cost` is the last paid price (nullable). It's how shop-mode persists
+// per-item prices — same item next week comes pre-filled, and the agent
+// can ground budget estimates in real receipt numbers instead of guesses.
 export const items = pgTable("items", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   store: text("store").notNull().default("fred"),
   done: boolean("done").notNull().default(false),
+  cost: real("cost"),
+  costAt: timestamp("cost_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
