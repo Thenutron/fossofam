@@ -86,6 +86,9 @@ type AgentRequest = {
   // routed here whenever possible; only divert when something truly isn't
   // carried there.
   anchorStore?: string;
+  // For plan_shopping — which day of the week the family is shopping ON,
+  // so the agent can skip dinners that have already passed this week.
+  todayDay?: string;
   // For get_recipe — when true, bypass the cache and regenerate from scratch.
   forceFresh?: boolean;
   // For modify_recipe — the existing recipe payload to mutate.
@@ -208,15 +211,32 @@ Return an updated recipe via modify_recipe. Make ONLY the changes the family ask
     const items = req.items ?? [];
     const cw = req.currentWeek ?? 1;
     const anchor = req.anchorStore && STORE[req.anchorStore] ? req.anchorStore : "";
+    const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const todayDay = req.todayDay && DAYS.includes(req.todayDay) ? req.todayDay : "";
+    const todayIdx = todayDay ? DAYS.indexOf(todayDay) : -1;
+    const daysToBuild = todayIdx >= 0 ? DAYS.slice(todayIdx) : DAYS;
+    const passedDays = todayIdx > 0 ? DAYS.slice(0, todayIdx) : [];
+
     const anchorBlock = anchor
       ? `# Anchor store
 The family is anchoring this week's run at: ${STORE[anchor].name} (${anchor}).
 ROUTING RULE: route every item to '${anchor}' UNLESS the store list above flags it as not carried there. Examples that should NOT go to '${anchor}': raw milk (→ coop or rawmilk pickup), chicken feed (→ coastal), mold-free coffee (→ sprouts or online). Everything else: ${anchor}.`
       : `# Anchor store
 The family has not picked an anchor this week. Use the default store-per-item routing.`;
+
+    const dayScopeBlock = todayDay
+      ? `# Shop scope (THIS IS LOAD-BEARING)
+Today is **${todayDay}**.
+- BUILD FOR: ${daysToBuild.join(", ")}${passedDays.length > 0 ? `\n- IGNORE these days (already past this week): ${passedDays.join(", ")} — their ingredients were either already bought or the meal was missed; either way the family isn't shopping for them now.` : ""}
+- If the family note explicitly mentions including a past day (e.g. "include Monday — making it tonight instead"), THEN include that day.`
+      : `# Shop scope
+No day context provided — build for the full Sunday → Saturday week.`;
+
     return `# Current week
 Cycle week: ${cw} of 3 (${cw === 3 ? "bulk week" : cw === 2 ? "feed week" : "normal week"})
 Weekly budget target: $215
+
+${dayScopeBlock}
 
 ${anchorBlock}
 

@@ -2756,6 +2756,10 @@ function PlanShoppingPanel({
         costAt: null as Date | null, createdAt: new Date(),
       })),
     ];
+    // Compute today's day-of-week client-side so the agent can skip days
+    // that have already passed this week.
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const todayDay = dayNames[new Date().getDay()];
     const res = await fetch("/api/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2766,6 +2770,7 @@ function PlanShoppingPanel({
         items: augmentedItems,
         currentWeek,
         anchorStore,
+        todayDay,
       }),
     });
     const data = await res.json();
@@ -2800,39 +2805,49 @@ function PlanShoppingPanel({
     }
   }
 
-  // Add = only return NEW items, append to existing.
+  // Add = only return NEW items, append to existing. Client-side dedupe by
+  // name catches anything the agent re-proposes anyway.
   async function runAppend(note: string, staples: string[]) {
     if (!note.trim() && staples.length === 0) return;
     setLoading(true);
     setError(null);
     try {
+      const existingNamesLC = new Set(
+        (result?.shopping_additions ?? []).map((a) => a.name.trim().toLowerCase()),
+      );
       const dedupeAgainst = (result?.shopping_additions ?? []).map((a) => a.name);
       const { proposal: r } = await callAgent(
         buildNote(note, staples, [
-          "These requests are ADDITIONS to the existing proposal — do NOT re-propose anything already on the items list above. ONLY return new items for these specific requests.",
+          "APPEND MODE — the family already has a proposal in progress. The 'Already on the shopping list' block above includes BOTH their live cart AND the items they've already accepted in this build session. Return ONLY items NOT already in that list, and ONLY items that satisfy the new request above. If the new request is fully covered, return an empty shopping_additions array.",
+          "Do NOT re-emit the existing items. Do NOT rebuild the whole week.",
         ]),
         dedupeAgainst,
       );
-      if (r.shopping_additions.length === 0) {
-        // Nothing new — leave existing proposal alone, just clear inputs.
+      // Client-side dedupe in case the model still echoes existing names.
+      const trulyNew = r.shopping_additions.filter(
+        (a) => !existingNamesLC.has(a.name.trim().toLowerCase()),
+      );
+      if (trulyNew.length === 0) {
         setRefineNote("");
         setIncludedStaples({});
+        setError("Nothing new to add — that request looks satisfied by the existing list.");
         return;
       }
+      const addedCost = trulyNew.reduce((s, a) => s + (a.est_cost || 0), 0);
       setResult((prev) => {
-        if (!prev) return r;
+        if (!prev) return { ...r, shopping_additions: trulyNew };
         return {
           ...prev,
-          shopping_additions: [...prev.shopping_additions, ...r.shopping_additions],
-          estimated_weekly_cost: r.estimated_weekly_cost || prev.estimated_weekly_cost,
-          budget_status: r.budget_status || prev.budget_status,
-          scrounge_suggestion: r.scrounge_suggestion || prev.scrounge_suggestion,
+          shopping_additions: [...prev.shopping_additions, ...trulyNew],
+          estimated_weekly_cost: Math.round((prev.estimated_weekly_cost || 0) + addedCost),
+          // keep prev.questions / notes / budget_status / scrounge — those
+          // describe the original proposal context; don't overwrite.
         };
       });
       setKeep((prev) => {
         const next = { ...prev };
         const baseIdx = result?.shopping_additions.length ?? 0;
-        r.shopping_additions.forEach((_, i) => { next[baseIdx + i] = true; });
+        trulyNew.forEach((_, i) => { next[baseIdx + i] = true; });
         return next;
       });
       setRefineNote("");
@@ -2974,6 +2989,16 @@ function PlanShoppingPanel({
       )}
       {result && !loading && (
         <>
+          {(() => {
+            const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+            const idx = new Date().getDay();
+            const remaining = dayNames.slice(idx);
+            return (
+              <div className="gf-mini" style={{ marginBottom: 6 }}>
+                Stocking for: <strong>{remaining[0]}–Sat</strong> ({remaining.length} {remaining.length === 1 ? "day" : "days"} left this week)
+              </div>
+            );
+          })()}
           <div className="note" style={{ marginBottom: 10 }}>{result.summary}</div>
 
           {/* Budget chip — comes back on every plan_shopping run now */}
