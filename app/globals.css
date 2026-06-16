@@ -233,11 +233,31 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
 
   /* STOCK REFINE — note + staples picker inside the Stock list sheet */
   .stock-refine {
-    display: flex; gap: 8px; margin-bottom: 10px; align-items: center;
+    display: flex; gap: 8px; margin-bottom: 8px; align-items: center;
   }
   .stock-refine input.txt { flex: 1; font-size: 14px; padding: 9px 11px; }
+  .stock-refine-actions {
+    display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .stock-refine-actions .btn-primary { font-size: 13px; padding: 8px 14px; }
+  .stock-refine-actions .btn-ghost { font-size: 13px; }
   .stock-staples { margin-bottom: 14px; }
   .stock-staples .gf-mini { margin-bottom: 5px; }
+
+  /* STOCK FOLLOW-UP QUESTIONS — terse yes/no cards in place of long notes */
+  .stock-questions { margin-bottom: 14px; }
+  .stock-q {
+    background: var(--surface-2); border-radius: 10px;
+    padding: 11px 14px; margin-bottom: 8px;
+    border: 1px solid var(--line);
+  }
+  .stock-q-text { font-size: 14.5px; font-weight: 600; color: var(--ink); }
+  .stock-q-impact { font-size: 12.5px; color: var(--ink-3); margin-top: 2px; }
+  .stock-q-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .stock-q-actions .btn-ghost { font-size: 13px; padding: 6px 12px; }
+  .stock-q.answered { background: var(--green-bg); border-color: transparent; }
+  .stock-q.answered .stock-q-text { color: var(--green-ink); }
+  .stock-q-answered { font-size: 12.5px; color: var(--green-ink); font-weight: 600; margin-top: 6px; }
 
   /* PROMINENT BUILD-FROM-DINNERS CTA on Shopping tab */
   .build-from-dinners {

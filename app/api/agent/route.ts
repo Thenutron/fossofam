@@ -235,7 +235,9 @@ For each non-skipped, non-blank dinner above, list everything the family needs t
 
 ORGANIC DEFAULT: Every shopping_addition name MUST be prefixed with 'Organic' when applicable — produce, meat, poultry, fish, dairy, eggs, and most pantry items. Examples: 'Organic ground beef', 'Organic honeycrisp apples', 'Organic kale', 'Organic chicken breast', 'Organic salmon'. Only skip the 'Organic' prefix when (a) it's a specific non-organic brand the family already buys (Goodles mac & cheese, Tillamook block cheese — they're already premium), or (b) the item genuinely isn't sold organic. When in doubt, prefix Organic.
 
-For est_cost: ground in any 'last paid' prices above when an analogous item exists, otherwise estimate from typical PNW grocery prices at the ORGANIC price point. Sum your est_costs into estimated_weekly_cost (round to whole dollars). Compare against the $215 target → budget_status. If over: propose a scrounge_suggestion day swap in the family's voice.`;
+For est_cost: ground in any 'last paid' prices above when an analogous item exists, otherwise estimate from typical PNW grocery prices at the ORGANIC price point. Sum your est_costs into estimated_weekly_cost (round to whole dollars). Compare against the $215 target → budget_status. If over: propose a scrounge_suggestion day swap in the family's voice.
+
+NO LONG NOTES. Don't write paragraphs of conditional reasoning like "(1) chili powder — if running low, otherwise skip…". Instead, surface those as short yes/no questions[] (≤4) that directly control which items get unchecked. The notes field is reserved for caveats you can't ask about, max 1 sentence.`;
   }
   if (req.tool === "parse_receipt") {
     const items = req.items ?? [];
@@ -351,8 +353,11 @@ export async function POST(req: Request) {
         }
       : { role: "user" as const, content: userContent };
 
+    // Haiku for most things — fast + cheap + plenty good for these tools.
+    // Sonnet stays the choice for parse_receipt (vision OCR quality matters).
+    const modelForCall = body.tool === "parse_receipt" ? "sonnet-4-6" : "haiku-4-5";
     const response = await llm({
-      model: "sonnet-4-6",
+      model: modelForCall,
       maxTokens: 4096,
       // Two system blocks: the big stable one is cached; the small per-tool
       // hint is appended uncached so swapping tools doesn't invalidate the

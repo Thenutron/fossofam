@@ -2556,12 +2556,14 @@ function RecipeImport({
 
 /* ---------- Plan shopping (build list from this week's dinners) ---------- */
 type PlanShoppingAddition = { name: string; store: string; for_meal: string; est_cost: number };
+type PlanShoppingQuestion = { text: string; affected_item_names: string[]; impact: string };
 type PlanShoppingResult = {
   summary: string;
   shopping_additions: PlanShoppingAddition[];
   estimated_weekly_cost: number;
   budget_status: "under" | "at" | "over";
   scrounge_suggestion: string;
+  questions: PlanShoppingQuestion[];
   notes: string;
 };
 
@@ -2584,38 +2586,73 @@ function PlanShoppingPanel({
   // Auto-runs on mount with empty note. User can refine and re-run.
   const [refineNote, setRefineNote] = useState("");
   const [includedStaples, setIncludedStaples] = useState<Record<string, boolean>>({});
+  const [answeredQs, setAnsweredQs] = useState<Record<number, "yes" | "no">>({});
 
-  async function runBuild(note: string, staples: string[]) {
-    setLoading(true);
-    setError(null);
+  function answerQuestion(idx: number, yes: boolean) {
+    if (!result) return;
+    if (yes) {
+      // Find shopping additions matching affected names, uncheck them.
+      const q = result.questions[idx];
+      const affected = q.affected_item_names.map((n) => n.trim().toLowerCase());
+      setKeep((prev) => {
+        const next = { ...prev };
+        result.shopping_additions.forEach((a, i) => {
+          if (affected.includes(a.name.trim().toLowerCase())) next[i] = false;
+        });
+        return next;
+      });
+    }
+    setAnsweredQs((p) => ({ ...p, [idx]: yes ? "yes" : "no" }));
+  }
+
+  async function callAgent(note: string, dedupeAgainst: string[]) {
     let anchorStore = "";
     try { anchorStore = localStorage.getItem("fossofam-active-store") || ""; } catch {}
-    // Build the effective note: any free-text + the staples the user wants
-    // explicitly added.
+    // Treat staged-but-not-applied proposal items as already on the list so
+    // append calls don't duplicate them.
+    const augmentedItems = dedupeAgainst.length === 0 ? items : [
+      ...items,
+      ...dedupeAgainst.map((name, i) => ({
+        id: -1 - i, name, store: "", done: false, cost: null as number | null,
+        costAt: null as Date | null, createdAt: new Date(),
+      })),
+    ];
+    const res = await fetch("/api/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tool: "plan_shopping",
+        note,
+        dinners,
+        items: augmentedItems,
+        currentWeek,
+        anchorStore,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+    return { proposal: data.proposal as PlanShoppingResult, proposalId: data.proposalId as number | undefined };
+  }
+
+  function buildNote(note: string, staples: string[], extra: string[] = []): string {
     const pieces: string[] = [];
     if (note.trim()) pieces.push(note.trim());
     if (staples.length > 0) pieces.push(`ALSO include these staples on the list: ${staples.join(", ")}.`);
-    const effective = pieces.join("\n\n");
+    pieces.push(...extra);
+    return pieces.join("\n\n");
+  }
+
+  // Re-run = full rebuild from scratch, replaces existing result.
+  async function runFresh(note: string, staples: string[]) {
+    setLoading(true);
+    setError(null);
+    setAnsweredQs({});
     try {
-      const res = await fetch("/api/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tool: "plan_shopping",
-          note: effective,
-          dinners,
-          items,
-          currentWeek,
-          anchorStore,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
-      const r = data.proposal as PlanShoppingResult;
-      setResult(r);
-      setProposalId(data.proposalId);
+      const { proposal, proposalId: pid } = await callAgent(buildNote(note, staples), []);
+      setResult(proposal);
+      setProposalId(pid);
       const k: Record<number, boolean> = {};
-      r.shopping_additions.forEach((_, i) => { k[i] = true; });
+      proposal.shopping_additions.forEach((_, i) => { k[i] = true; });
       setKeep(k);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
@@ -2624,15 +2661,64 @@ function PlanShoppingPanel({
     }
   }
 
+  // Add = only return NEW items, append to existing.
+  async function runAppend(note: string, staples: string[]) {
+    if (!note.trim() && staples.length === 0) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const dedupeAgainst = (result?.shopping_additions ?? []).map((a) => a.name);
+      const { proposal: r } = await callAgent(
+        buildNote(note, staples, [
+          "These requests are ADDITIONS to the existing proposal — do NOT re-propose anything already on the items list above. ONLY return new items for these specific requests.",
+        ]),
+        dedupeAgainst,
+      );
+      if (r.shopping_additions.length === 0) {
+        // Nothing new — leave existing proposal alone, just clear inputs.
+        setRefineNote("");
+        setIncludedStaples({});
+        return;
+      }
+      setResult((prev) => {
+        if (!prev) return r;
+        return {
+          ...prev,
+          shopping_additions: [...prev.shopping_additions, ...r.shopping_additions],
+          estimated_weekly_cost: r.estimated_weekly_cost || prev.estimated_weekly_cost,
+          budget_status: r.budget_status || prev.budget_status,
+          scrounge_suggestion: r.scrounge_suggestion || prev.scrounge_suggestion,
+        };
+      });
+      setKeep((prev) => {
+        const next = { ...prev };
+        const baseIdx = result?.shopping_additions.length ?? 0;
+        r.shopping_additions.forEach((_, i) => { next[baseIdx + i] = true; });
+        return next;
+      });
+      setRefineNote("");
+      setIncludedStaples({});
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    runBuild("", []);
+    runFresh("", []);
     // Intentionally run once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function reRun() {
     const staples = Object.entries(includedStaples).filter(([, v]) => v).map(([k]) => k);
-    runBuild(refineNote, staples);
+    runFresh(refineNote, staples);
+  }
+
+  function addOn() {
+    const staples = Object.entries(includedStaples).filter(([, v]) => v).map(([k]) => k);
+    runAppend(refineNote, staples);
   }
 
   function toggleStaple(s: string) {
@@ -2668,16 +2754,26 @@ function PlanShoppingPanel({
           placeholder="Special requests? Pasture-raised only, use leftover chicken…"
           value={refineNote}
           onChange={(e) => setRefineNote(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") reRun(); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && (refineNote.trim() || Object.values(includedStaples).some(Boolean))) addOn(); }}
           disabled={loading}
         />
+      </div>
+      <div className="stock-refine-actions">
+        <button
+          className="btn-primary"
+          onClick={addOn}
+          disabled={loading || (!refineNote.trim() && !Object.values(includedStaples).some(Boolean))}
+          style={{ whiteSpace: "nowrap" }}
+        >
+          {loading ? "…" : "+ Add these"}
+        </button>
         <button
           className="btn-ghost"
           onClick={reRun}
           disabled={loading}
           style={{ whiteSpace: "nowrap" }}
         >
-          {loading ? "Thinking…" : "🔄 Re-run"}
+          🔄 Re-run from scratch
         </button>
       </div>
       <div className="stock-staples">
@@ -2732,11 +2828,33 @@ function PlanShoppingPanel({
             </div>
           )}
 
-          {result.notes && (
-            <div className="last-week-banner over" style={{ marginBottom: 12 }}>
-              <i className="ti ti-info-circle" />
-              <div>{result.notes}</div>
+          {result.questions && result.questions.length > 0 && (
+            <div className="stock-questions">
+              <div className="sheet-h3">Quick check</div>
+              {result.questions.map((q, idx) => {
+                const answered = answeredQs[idx];
+                return (
+                  <div key={idx} className={"stock-q" + (answered ? " answered" : "")}>
+                    <div className="stock-q-text">{q.text}</div>
+                    {q.impact && <div className="stock-q-impact">{q.impact}</div>}
+                    {!answered ? (
+                      <div className="stock-q-actions">
+                        <button className="btn-ghost" onClick={() => answerQuestion(idx, true)}>Yes — skip</button>
+                        <button className="btn-ghost" onClick={() => answerQuestion(idx, false)}>No — keep</button>
+                      </div>
+                    ) : (
+                      <div className="stock-q-answered">
+                        {answered === "yes" ? "✓ skipping" : "✓ keeping"}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+          )}
+
+          {result.notes && (
+            <div className="gf-mini" style={{ marginBottom: 10 }}>{result.notes}</div>
           )}
 
           {result.shopping_additions.length === 0 ? (

@@ -340,12 +340,36 @@ const planShoppingTool: AgentTool = {
         type: "string",
         description: "If budget_status is 'over', propose a 'scrounge night' day swap (day name + brief idea, e.g. 'Friday — pantry raid, eggs + leftovers'). Empty string otherwise. Honor the tone.",
       },
+      questions: {
+        type: "array",
+        description: "Up to 4 SHORT yes/no follow-up questions the family should answer before applying. Use this INSTEAD of writing paragraphs of conditional reasoning in notes. Each question lets them quickly remove items from the proposal. Use only when an item's necessity actually depends on something they know (e.g. 'Do you already have chili powder?', 'Burger bowls — skip the buns?'). Empty array is fine if no real questions.",
+        items: {
+          type: "object",
+          properties: {
+            text: {
+              type: "string",
+              description: "Terse question, ≤12 words. Family tone. Example: 'Skip GF buns if going burger bowls?'",
+            },
+            affected_item_names: {
+              type: "array",
+              description: "EXACT names from your shopping_additions that get unchecked if the family answers YES.",
+              items: { type: "string" },
+            },
+            impact: {
+              type: "string",
+              description: "1-phrase impact line, e.g. 'saves ~$5' or 'skip 2 items'.",
+            },
+          },
+          required: ["text", "affected_item_names", "impact"],
+          additionalProperties: false,
+        },
+      },
       notes: {
         type: "string",
-        description: "Caveats — meals you couldn't decode, items you deliberately skipped as 'probably already have', etc. Empty if clean.",
+        description: "Reserved for caveats you can't surface as a question (e.g. 'couldn't decode Thursday's meal'). Max ONE sentence. Empty if clean.",
       },
     },
-    required: ["summary", "shopping_additions", "estimated_weekly_cost", "budget_status", "scrounge_suggestion", "notes"],
+    required: ["summary", "shopping_additions", "estimated_weekly_cost", "budget_status", "scrounge_suggestion", "questions", "notes"],
     additionalProperties: false,
   },
 };
@@ -502,6 +526,7 @@ export type PlanShoppingProposal = {
   estimated_weekly_cost: number;
   budget_status: "under" | "at" | "over";
   scrounge_suggestion: string;
+  questions: { text: string; affected_item_names: string[]; impact: string }[];
   notes: string;
 };
 
