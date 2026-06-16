@@ -2518,10 +2518,13 @@ function RecipeImport({
 }
 
 /* ---------- Plan shopping (build list from this week's dinners) ---------- */
-type PlanShoppingAddition = { name: string; store: string; for_meal: string };
+type PlanShoppingAddition = { name: string; store: string; for_meal: string; est_cost: number };
 type PlanShoppingResult = {
   summary: string;
   shopping_additions: PlanShoppingAddition[];
+  estimated_weekly_cost: number;
+  budget_status: "under" | "at" | "over";
+  scrounge_suggestion: string;
   notes: string;
 };
 
@@ -2607,12 +2610,41 @@ function PlanShoppingPanel({
       {result && !loading && (
         <>
           <div className="note" style={{ marginBottom: 10 }}>{result.summary}</div>
+
+          {/* Budget chip — comes back on every plan_shopping run now */}
+          {(result.estimated_weekly_cost > 0 || result.budget_status) && (
+            <div className="receipt-summary" style={{ marginBottom: 12 }}>
+              <div className="rs-block">
+                <div className="rs-label">Est. this week</div>
+                <div className="rs-val" style={{ fontSize: 22 }}>${Math.round(result.estimated_weekly_cost)}</div>
+              </div>
+              <div className={"rs-block" + (result.budget_status === "over" ? " rs-warn" : "")}>
+                <div className="rs-label">vs $215</div>
+                <div className="rs-val" style={{ fontSize: 18 }}>
+                  {result.budget_status === "over"
+                    ? `+$${Math.max(0, Math.round(result.estimated_weekly_cost - 215))} over`
+                    : result.budget_status === "under"
+                    ? `$${Math.max(0, Math.round(215 - result.estimated_weekly_cost))} under`
+                    : "on target"}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {result.scrounge_suggestion && (
+            <div className="last-week-banner over" style={{ marginBottom: 12 }}>
+              <i className="ti ti-alert-triangle" />
+              <div><strong>Scrounge:</strong> {result.scrounge_suggestion}</div>
+            </div>
+          )}
+
           {result.notes && (
             <div className="last-week-banner over" style={{ marginBottom: 12 }}>
               <i className="ti ti-info-circle" />
               <div>{result.notes}</div>
             </div>
           )}
+
           {result.shopping_additions.length === 0 ? (
             <div className="empty" style={{ padding: "14px 0" }}>You&apos;re already stocked for the week.</div>
           ) : (
@@ -2629,6 +2661,9 @@ function PlanShoppingPanel({
                     {a.name}
                     <div className="rr-sub">→ {a.store} · for {a.for_meal}</div>
                   </div>
+                  {a.est_cost > 0 && (
+                    <div className="rr-price"><span className="rr-new">${a.est_cost.toFixed(2)}</span></div>
+                  )}
                 </label>
               ))}
               <div className="toolbar" style={{ marginTop: 16 }}>

@@ -298,7 +298,7 @@ const parseReceiptTool: AgentTool = {
 const planShoppingTool: AgentTool = {
   name: "plan_shopping",
   description:
-    "Read the family's current 7-day dinner plan + the existing shopping list, and propose the items they need to BUY this week to make all the dinners happen. Don't change the dinners. Don't propose items already on the list. Skip pantry staples (salt/pepper/oil/flour/sugar/basic spices/butter/garlic powder/eggs/milk unless quantity is high). Focus on meat, produce, specialty items, and anything explicitly mentioned in a dinner's note.",
+    "Read the family's current 7-day dinner plan + the existing shopping list, and propose the items they need to BUY this week to make all the dinners happen. Don't change the dinners. Don't propose items already on the list. Skip pantry staples (salt/pepper/oil/flour/sugar/basic spices/butter/garlic powder/eggs/milk unless quantity is high). Focus on meat, produce, specialty items, and anything explicitly mentioned in a dinner's note. ALWAYS estimate the total cost vs the family's $215 weekly target — use any 'last paid' prices from the cart for grounding.",
   input_schema: {
     type: "object",
     properties: {
@@ -318,17 +318,34 @@ const planShoppingTool: AgentTool = {
               type: "string",
               description: "Which day(s) this is for, terse — e.g. 'Sun crock' / 'Tue tacos + Wed burgers'. Helps the family understand why it's listed.",
             },
+            est_cost: {
+              type: "number",
+              description: "Best-effort estimated cost in dollars. Use historical 'last paid' prices when an analogous item was bought before, otherwise estimate from your knowledge of typical PNW grocery prices.",
+            },
           },
-          required: ["name", "store", "for_meal"],
+          required: ["name", "store", "for_meal", "est_cost"],
           additionalProperties: false,
         },
+      },
+      estimated_weekly_cost: {
+        type: "number",
+        description: "Total estimated cost of all shopping_additions in dollars. Round to whole dollars.",
+      },
+      budget_status: {
+        type: "string",
+        enum: ["under", "at", "over"],
+        description: "vs $215 target: 'under' (≤$200), 'at' (within ±$15), 'over' (>$230).",
+      },
+      scrounge_suggestion: {
+        type: "string",
+        description: "If budget_status is 'over', propose a 'scrounge night' day swap (day name + brief idea, e.g. 'Friday — pantry raid, eggs + leftovers'). Empty string otherwise. Honor the tone.",
       },
       notes: {
         type: "string",
         description: "Caveats — meals you couldn't decode, items you deliberately skipped as 'probably already have', etc. Empty if clean.",
       },
     },
-    required: ["summary", "shopping_additions", "notes"],
+    required: ["summary", "shopping_additions", "estimated_weekly_cost", "budget_status", "scrounge_suggestion", "notes"],
     additionalProperties: false,
   },
 };
@@ -483,7 +500,10 @@ export type ModifyRecipeProposal = {
 
 export type PlanShoppingProposal = {
   summary: string;
-  shopping_additions: { name: string; store: string; for_meal: string }[];
+  shopping_additions: { name: string; store: string; for_meal: string; est_cost: number }[];
+  estimated_weekly_cost: number;
+  budget_status: "under" | "at" | "over";
+  scrounge_suggestion: string;
   notes: string;
 };
 

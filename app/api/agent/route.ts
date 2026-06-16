@@ -211,6 +211,7 @@ ROUTING RULE: route every item to '${anchor}' UNLESS the store list above flags 
 The family has not picked an anchor this week. Use the default store-per-item routing.`;
     return `# Current week
 Cycle week: ${cw} of 3 (${cw === 3 ? "bulk week" : cw === 2 ? "feed week" : "normal week"})
+Weekly budget target: $215
 
 ${anchorBlock}
 
@@ -218,10 +219,14 @@ ${anchorBlock}
 ${dinners.map((d) => `- ${d.day} [${d.tag}/${d.label}]${d.skip ? " (SKIPPED — ignore this day)" : ""}: ${d.meal || "(blank — ignore this day)"}${d.note ? " — note: " + d.note : ""}`).join("\n")}
 
 # Already on the shopping list (DO NOT propose duplicates of these)
-${items.length === 0 ? "(list is empty)" : items.map((i) => `- ${i.name}`).join("\n")}
+${items.length === 0
+  ? "(list is empty)"
+  : items.map((i) => `- ${i.name}${i.cost != null ? ` (last paid $${i.cost.toFixed(2)})` : ""}`).join("\n")}
 
 # Task
-For each non-skipped, non-blank dinner above, list everything the family needs to BUY to make it. Output via plan_shopping. Skip dupes against the existing list. Skip basic pantry items (oil, salt, pepper, common spices, flour, sugar, butter, garlic powder; eggs/milk only if a meal uses a big quantity). Use the store enum's keys for the 'store' field (e.g. 'fred', 'grocout', 'sprouts'). Use 'for_meal' to give the family a 1-line reason (e.g. 'Sun crock', 'Tue tacos + Wed burgers').`;
+For each non-skipped, non-blank dinner above, list everything the family needs to BUY to make it. Output via plan_shopping. Skip dupes against the existing list. Skip basic pantry items (oil, salt, pepper, common spices, flour, sugar, butter, garlic powder; eggs/milk only if a meal uses a big quantity). Use the store enum's keys for the 'store' field (e.g. 'fred', 'grocout', 'sprouts'). Use 'for_meal' to give the family a 1-line reason (e.g. 'Sun crock', 'Tue tacos + Wed burgers').
+
+For est_cost: ground in any 'last paid' prices above when an analogous item exists, otherwise estimate from typical PNW grocery prices (organic where the family prefers organic — meat, dairy, produce). Sum your est_costs into estimated_weekly_cost (round to whole dollars). Compare against the $215 target → budget_status. If over: propose a scrounge_suggestion day swap in the family's voice.`;
   }
   if (req.tool === "parse_receipt") {
     const items = req.items ?? [];
