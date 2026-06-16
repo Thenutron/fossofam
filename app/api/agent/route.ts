@@ -19,7 +19,7 @@ import { eq, sql } from "drizzle-orm";
 import { FAMILY_NARRATIVE, TONE } from "@/lib/familyProfile";
 import { STORE, STORE_ORDER, ROUTE_PLAN, STAPLES, LAZY_IDEAS, MEDIUM_IDEAS, CROCK_IDEAS } from "@/lib/data";
 import { llm, LlmError, type LlmImageMediaType } from "@/lib/llm";
-import { getTool, type AgentToolName, type ModifyWeekProposal, type RecipeProposal, type ReceiptProposal, type PlanShoppingProposal } from "@/lib/agentTools";
+import { getTool, type AgentToolName, type ModifyWeekProposal, type RecipeProposal, type ReceiptProposal, type PlanShoppingProposal, type ModifyRecipeProposal } from "@/lib/agentTools";
 import type { Dinner, Item } from "@/db/schema";
 
 export const runtime = "nodejs";
@@ -88,6 +88,8 @@ type AgentRequest = {
   anchorStore?: string;
   // For get_recipe — when true, bypass the cache and regenerate from scratch.
   forceFresh?: boolean;
+  // For modify_recipe — the existing recipe payload to mutate.
+  currentRecipe?: Record<string, unknown>;
 };
 
 // Strip HTML to readable text for the LLM. Good-enough heuristic for the
@@ -169,6 +171,16 @@ ${extras?.recipeText ?? "(no text — fetch failed)"}
 ${req.note?.trim() || "(none)"}
 
 Extract the actual recipe from the page text above. Ignore the blog narrative, ads, comments, related-recipe links. Suggest a day to slot it into based on its effort, propose shopping_additions only for ingredients the family probably doesn't already have, and flag any family_fit_warnings (especially shellfish for Kait/Revs).`;
+  }
+  if (req.tool === "modify_recipe") {
+    const current = req.currentRecipe ?? {};
+    return `# Current recipe (preserve structure unless the change calls for it)
+${JSON.stringify(current, null, 2)}
+
+# Family modification request
+${req.note?.trim() || "(none — return the recipe unchanged)"}
+
+Return an updated recipe via modify_recipe. Make ONLY the changes the family asked for — don't gratuitously rewrite. Respect GF household + per-person preferences. Always include a change_summary in the family's tone.`;
   }
   if (req.tool === "plan_shopping") {
     const dinners = req.dinners ?? [];
@@ -332,7 +344,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const proposalData = toolUse.input as ModifyWeekProposal | RecipeProposal | ReceiptProposal | PlanShoppingProposal;
+    const proposalData = toolUse.input as ModifyWeekProposal | RecipeProposal | ReceiptProposal | PlanShoppingProposal | ModifyRecipeProposal;
 
     // Cache the recipe for future calls so we don't regenerate the same meal.
     if (body.tool === "get_recipe" && body.meal) {

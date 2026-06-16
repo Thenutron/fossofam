@@ -321,6 +321,10 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
     padding: 2px 8px; border-radius: 999px;
     text-transform: uppercase; letter-spacing: 0.4px;
   }
+  .recipe-modify {
+    margin-top: 22px; padding-top: 16px;
+    border-top: 1px solid var(--line);
+  }
 
   /* OVERFLOW (post-trip leftovers) */
   .overflow-items {

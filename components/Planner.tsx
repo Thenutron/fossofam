@@ -1453,6 +1453,48 @@ function RecipeSheet({
   onClose: () => void;
   onRegenerate: () => void;
 }) {
+  // Local override — when user runs modify_recipe, we replace the displayed
+  // recipe with the modified version. The cached payload stays untouched
+  // (substitution is per-cook, not a permanent edit).
+  const [override, setOverride] = useState<(Recipe & { change_summary?: string }) | null>(null);
+  const [modifyInput, setModifyInput] = useState("");
+  const [modifyLoading, setModifyLoading] = useState(false);
+  const [modifyError, setModifyError] = useState<string | null>(null);
+  const displayed = override ?? recipe;
+
+  // Reset modification state whenever the upstream recipe changes
+  // (regenerate / open a different meal).
+  useEffect(() => {
+    setOverride(null);
+    setModifyInput("");
+    setModifyError(null);
+  }, [recipe]);
+
+  async function submitModify() {
+    if (!modifyInput.trim() || !displayed) return;
+    setModifyLoading(true);
+    setModifyError(null);
+    try {
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tool: "modify_recipe",
+          note: modifyInput,
+          currentRecipe: displayed,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+      setOverride(data.proposal);
+      setModifyInput("");
+    } catch (e) {
+      setModifyError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setModifyLoading(false);
+    }
+  }
+
   return (
     <div onClick={onClose} className="sheet-bg">
       <div onClick={(e) => e.stopPropagation()} className="sheet">
@@ -1472,29 +1514,36 @@ function RecipeSheet({
           </div>
         )}
 
-        {recipe && !loading && (
+        {displayed && !loading && (
           <>
-            <h2 style={{ marginTop: 0, fontSize: 22, lineHeight: 1.25 }}>{recipe.title}</h2>
+            {override?.change_summary && (
+              <div className="last-week-banner good" style={{ marginBottom: 14 }}>
+                <i className="ti ti-edit" />
+                <div><strong>Changed:</strong> {override.change_summary}</div>
+              </div>
+            )}
+            <h2 style={{ marginTop: 0, fontSize: 22, lineHeight: 1.25 }}>{displayed.title}</h2>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", margin: "8px 0 14px", fontSize: 13, color: "var(--ink-2)" }}>
-              <span>🍽 {recipe.servings}</span>
-              <span>⏱ {recipe.prep_time} prep</span>
-              <span>🔥 {recipe.cook_time}</span>
-              {cached && <span className="cached-badge">saved</span>}
+              <span>🍽 {displayed.servings}</span>
+              <span>⏱ {displayed.prep_time} prep</span>
+              <span>🔥 {displayed.cook_time}</span>
+              {cached && !override && <span className="cached-badge">saved</span>}
+              {override && <span className="cached-badge" style={{ background: "var(--amber-bg)", color: "var(--amber-ink)" }}>modified</span>}
               <button className="btn-ghost" style={{ marginLeft: "auto", fontSize: 12, padding: "4px 10px" }} onClick={onRegenerate}>
                 🔄 New version
               </button>
             </div>
 
-            {recipe.when_to_start && (
+            {displayed.when_to_start && (
               <div className="last-week-banner good" style={{ marginBottom: 14 }}>
                 <i className="ti ti-clock" />
-                <div><strong>Start by:</strong> {recipe.when_to_start}</div>
+                <div><strong>Start by:</strong> {displayed.when_to_start}</div>
               </div>
             )}
 
             <h3 className="sheet-h3">Ingredients</h3>
             <ul style={{ paddingLeft: 18, margin: 0, fontSize: 14, lineHeight: 1.7 }}>
-              {recipe.ingredients.map((ing, i) => (
+              {displayed.ingredients.map((ing, i) => (
                 <li key={i}>
                   <strong>{ing.amount}</strong> {ing.item}
                   {ing.note && <span className="gf-mini" style={{ display: "inline", marginLeft: 6 }}>({ing.note})</span>}
@@ -1504,21 +1553,56 @@ function RecipeSheet({
 
             <h3 className="sheet-h3">Steps</h3>
             <ol style={{ paddingLeft: 22, margin: 0, fontSize: 14, lineHeight: 1.8 }}>
-              {recipe.steps.map((s, i) => (
+              {displayed.steps.map((s, i) => (
                 <li key={i} style={{ marginBottom: 4 }}>{s.replace(/^\s*(?:step\s*)?\d+[.)]\s*/i, "")}</li>
               ))}
             </ol>
 
-            {recipe.tips.length > 0 && (
+            {displayed.tips.length > 0 && (
               <>
                 <h3 className="sheet-h3">Tips</h3>
                 <ul style={{ paddingLeft: 18, margin: 0, fontSize: 14, lineHeight: 1.7 }}>
-                  {recipe.tips.map((t, i) => (
+                  {displayed.tips.map((t, i) => (
                     <li key={i}>{t}</li>
                   ))}
                 </ul>
               </>
             )}
+
+            {/* Substitute / modify chat */}
+            <div className="recipe-modify">
+              <div className="sheet-h3">Out of something? Tweak it?</div>
+              <div className="add-row" style={{ marginBottom: 0 }}>
+                <input
+                  className="txt"
+                  type="text"
+                  placeholder="e.g. out of cream, use chicken, kid version"
+                  value={modifyInput}
+                  onChange={(e) => setModifyInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") submitModify(); }}
+                  disabled={modifyLoading}
+                />
+                <button
+                  className="btn-primary"
+                  onClick={submitModify}
+                  disabled={modifyLoading || !modifyInput.trim()}
+                >
+                  {modifyLoading ? "Thinking…" : "Ask"}
+                </button>
+              </div>
+              {modifyError && (
+                <div className="hint" style={{ color: "var(--coral-ink, #c4452a)", marginTop: 6 }}>{modifyError}</div>
+              )}
+              {override && (
+                <button
+                  className="btn-ghost"
+                  style={{ marginTop: 8, fontSize: 12 }}
+                  onClick={() => { setOverride(null); }}
+                >
+                  ↩ revert to saved
+                </button>
+              )}
+            </div>
           </>
         )}
       </div>

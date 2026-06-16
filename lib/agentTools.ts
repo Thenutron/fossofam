@@ -13,7 +13,7 @@
 
 import { STORE_ORDER } from "./data";
 
-export type AgentToolName = "modify_week" | "get_recipe" | "import_recipe" | "parse_receipt" | "plan_shopping";
+export type AgentToolName = "modify_week" | "get_recipe" | "import_recipe" | "parse_receipt" | "plan_shopping" | "modify_recipe";
 
 export type AgentTool = {
   name: AgentToolName;
@@ -333,7 +333,49 @@ const planShoppingTool: AgentTool = {
   },
 };
 
-export const AGENT_TOOLS: AgentTool[] = [modifyWeekTool, getRecipeTool, importRecipeTool, parseReceiptTool, planShoppingTool];
+// --- modify_recipe ---
+// Mid-cook substitution / kid-friendly tweak / dietary swap. Takes the
+// current recipe + a freeform modification note ("out of cream", "use
+// chicken instead of beef") and returns the updated recipe + a short
+// change summary in the family's tone.
+const modifyRecipeTool: AgentTool = {
+  name: "modify_recipe",
+  description:
+    "Modify an existing recipe based on the family's request. Common requests: 'out of X', 'use Y instead of Z', 'make it dairy-free', 'kid version'. Keep the recipe's structure intact. Respect dietary constraints (GF household). Adjust ingredients + steps as needed. Always include a short change_summary in the family's voice — they're probably mid-cook and need context fast.",
+  input_schema: {
+    type: "object",
+    properties: {
+      title: { type: "string", description: "Updated title — keep similar if changes are minor." },
+      servings: { type: "string" },
+      prep_time: { type: "string" },
+      cook_time: { type: "string" },
+      ingredients: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            item: { type: "string" },
+            amount: { type: "string" },
+            note: { type: "string" },
+          },
+          required: ["item", "amount", "note"],
+          additionalProperties: false,
+        },
+      },
+      steps: { type: "array", items: { type: "string" } },
+      tips: { type: "array", items: { type: "string" } },
+      when_to_start: { type: "string" },
+      change_summary: {
+        type: "string",
+        description: "1-2 sentences in family tone — what you changed and why. Be terse and useful.",
+      },
+    },
+    required: ["title", "servings", "prep_time", "cook_time", "ingredients", "steps", "tips", "when_to_start", "change_summary"],
+    additionalProperties: false,
+  },
+};
+
+export const AGENT_TOOLS: AgentTool[] = [modifyWeekTool, getRecipeTool, importRecipeTool, parseReceiptTool, planShoppingTool, modifyRecipeTool];
 
 export function getTool(name: AgentToolName): AgentTool {
   const tool = AGENT_TOOLS.find((t) => t.name === name);
@@ -387,6 +429,18 @@ export type ImportRecipeProposal = {
   family_fit_warnings: string;
 };
 
+export type ModifyRecipeProposal = {
+  title: string;
+  servings: string;
+  prep_time: string;
+  cook_time: string;
+  ingredients: { item: string; amount: string; note: string }[];
+  steps: string[];
+  tips: string[];
+  when_to_start: string;
+  change_summary: string;
+};
+
 export type PlanShoppingProposal = {
   summary: string;
   shopping_additions: { name: string; store: string; for_meal: string }[];
@@ -423,4 +477,5 @@ export type ToolOutput =
   | { tool: "get_recipe"; data: RecipeProposal }
   | { tool: "import_recipe"; data: ImportRecipeProposal }
   | { tool: "parse_receipt"; data: ReceiptProposal }
-  | { tool: "plan_shopping"; data: PlanShoppingProposal };
+  | { tool: "plan_shopping"; data: PlanShoppingProposal }
+  | { tool: "modify_recipe"; data: ModifyRecipeProposal };
