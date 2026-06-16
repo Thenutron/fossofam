@@ -3037,22 +3037,37 @@ function PlanShoppingPanel({
           ) : (
             <>
               <div className="sheet-h3">Add ({Object.values(keep).filter(Boolean).length} of {result.shopping_additions.length})</div>
-              {result.shopping_additions.map((a, i) => (
-                <label key={i} className={"receipt-row" + (keep[i] ? "" : " off")}>
-                  <input
-                    type="checkbox"
-                    checked={!!keep[i]}
-                    onChange={() => setKeep((p) => ({ ...p, [i]: !p[i] }))}
-                  />
-                  <div className="rr-name">
-                    {a.name}
-                    <div className="rr-sub">→ {a.store} · for {a.for_meal}</div>
+              <div className="gf-mini" style={{ marginBottom: 6 }}>Default is need it — tap <strong>× have it</strong> on anything you already have.</div>
+              {result.shopping_additions.map((a, i) => {
+                const have = !keep[i];
+                return (
+                  <div key={i} className={"receipt-row" + (have ? " off" : "")}>
+                    <input
+                      type="checkbox"
+                      checked={!have}
+                      onChange={() => setKeep((p) => ({ ...p, [i]: !p[i] }))}
+                    />
+                    <div className="rr-name">
+                      {a.name}
+                      <div className="rr-sub">→ {a.store} · for {a.for_meal}</div>
+                    </div>
+                    {a.est_cost > 0 && (
+                      <div className="rr-price"><span className="rr-new">${a.est_cost.toFixed(2)}</span></div>
+                    )}
+                    <button
+                      className={"have-it" + (have ? " active" : "")}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setKeep((p) => ({ ...p, [i]: have }));
+                      }}
+                      aria-label={have ? "Mark as needed" : "Mark as already have"}
+                    >
+                      {have ? "✓ have it" : "× have it"}
+                    </button>
                   </div>
-                  {a.est_cost > 0 && (
-                    <div className="rr-price"><span className="rr-new">${a.est_cost.toFixed(2)}</span></div>
-                  )}
-                </label>
-              ))}
+                );
+              })}
               <div className="toolbar" style={{ marginTop: 16 }}>
                 <button className="btn-primary" onClick={apply}>
                   Add {Object.values(keep).filter(Boolean).length} to list

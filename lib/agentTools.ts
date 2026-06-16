@@ -342,7 +342,7 @@ const planShoppingTool: AgentTool = {
       },
       questions: {
         type: "array",
-        description: "Up to 4 SHORT yes/no follow-up questions the family should answer before applying. Use this INSTEAD of writing paragraphs of conditional reasoning in notes. Each question lets them quickly remove items from the proposal. Use only when an item's necessity actually depends on something they know (e.g. 'Do you already have chili powder?', 'Burger bowls — skip the buns?'). Empty array is fine if no real questions.",
+        description: "Up to 6 SHORT yes/no follow-up questions the family should answer before applying. Use this INSTEAD of writing paragraphs of conditional reasoning in notes. Each question lets them quickly remove items from the proposal — DEFAULT IS THAT THE FAMILY NEEDS THE ITEM, ask only when there's a real chance they already have it. Cover ANY category that families commonly have on hand, not just spices: shredded cheese / Tillamook block / parmesan, mayo / mustard / hot sauce / ketchup, refried beans / canned tomatoes / coconut milk / broth, GF pasta / GF bread / tortillas / wraps, frozen tater tots / frozen veggies, baking staples (flour / sugar / baking powder), onions / garlic / potatoes (long shelf life), eggs / milk (only when quantity is high), spices / cumin / chili powder / cinnamon. Each question MUST list affected_item_names exactly as they appear in shopping_additions. Skip questions you're 90%+ sure they'll need (e.g. fresh produce for the specific meal).",
         items: {
           type: "object",
           properties: {
