@@ -228,6 +228,8 @@ ${items.length === 0
   ? "(list is empty)"
   : items.map((i) => `- ${i.name}${i.cost != null ? ` (last paid $${i.cost.toFixed(2)})` : ""}`).join("\n")}
 
+${req.note?.trim() ? `# Family note for this build (HONOR LITERALLY — special diets, leftovers to use, things to skip)\n${req.note.trim()}\n` : ""}
+
 # Task
 For each non-skipped, non-blank dinner above, list everything the family needs to BUY to make it. Output via plan_shopping. Skip dupes against the existing list. Skip basic pantry items (oil, salt, pepper, common spices, flour, sugar, butter, garlic powder; eggs/milk only if a meal uses a big quantity). Use the store enum's keys for the 'store' field (e.g. 'fred', 'grocout', 'sprouts'). Use 'for_meal' to give the family a 1-line reason (e.g. 'Sun crock', 'Tue tacos + Wed burgers').
 

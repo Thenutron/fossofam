@@ -2580,46 +2580,64 @@ function PlanShoppingPanel({
   const [proposalId, setProposalId] = useState<number | undefined>(undefined);
   const [keep, setKeep] = useState<Record<number, boolean>>({});
 
-  useEffect(() => {
-    let canceled = false;
-    async function run() {
-      setLoading(true);
-      setError(null);
-      let anchorStore = "";
-      try { anchorStore = localStorage.getItem("fossofam-active-store") || ""; } catch {}
-      try {
-        const res = await fetch("/api/agent", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tool: "plan_shopping",
-            note: "",
-            dinners,
-            items,
-            currentWeek,
-            anchorStore,
-          }),
-        });
-        const data = await res.json();
-        if (canceled) return;
-        if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
-        const r = data.proposal as PlanShoppingResult;
-        setResult(r);
-        setProposalId(data.proposalId);
-        const k: Record<number, boolean> = {};
-        r.shopping_additions.forEach((_, i) => { k[i] = true; });
-        setKeep(k);
-      } catch (e) {
-        if (!canceled) setError(e instanceof Error ? e.message : "Unknown error");
-      } finally {
-        if (!canceled) setLoading(false);
-      }
+  // Special-requests refinement: free-text note + staples to include.
+  // Auto-runs on mount with empty note. User can refine and re-run.
+  const [refineNote, setRefineNote] = useState("");
+  const [includedStaples, setIncludedStaples] = useState<Record<string, boolean>>({});
+
+  async function runBuild(note: string, staples: string[]) {
+    setLoading(true);
+    setError(null);
+    let anchorStore = "";
+    try { anchorStore = localStorage.getItem("fossofam-active-store") || ""; } catch {}
+    // Build the effective note: any free-text + the staples the user wants
+    // explicitly added.
+    const pieces: string[] = [];
+    if (note.trim()) pieces.push(note.trim());
+    if (staples.length > 0) pieces.push(`ALSO include these staples on the list: ${staples.join(", ")}.`);
+    const effective = pieces.join("\n\n");
+    try {
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tool: "plan_shopping",
+          note: effective,
+          dinners,
+          items,
+          currentWeek,
+          anchorStore,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+      const r = data.proposal as PlanShoppingResult;
+      setResult(r);
+      setProposalId(data.proposalId);
+      const k: Record<number, boolean> = {};
+      r.shopping_additions.forEach((_, i) => { k[i] = true; });
+      setKeep(k);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setLoading(false);
     }
-    run();
-    return () => { canceled = true; };
-    // Intentionally run once on mount with the snapshot props.
+  }
+
+  useEffect(() => {
+    runBuild("", []);
+    // Intentionally run once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function reRun() {
+    const staples = Object.entries(includedStaples).filter(([, v]) => v).map(([k]) => k);
+    runBuild(refineNote, staples);
+  }
+
+  function toggleStaple(s: string) {
+    setIncludedStaples((p) => ({ ...p, [s]: !p[s] }));
+  }
 
   function apply() {
     if (!result) return;
@@ -2638,8 +2656,47 @@ function PlanShoppingPanel({
   return (
     <div>
       <h2 className="sheet-h2">Stock the week</h2>
+
+      {/* Refinement: free-text note + staples toggles. Lets the family
+          send constraints to the agent ("pasture-raised only", "use the
+          leftover chicken", "kid snacks for Thursday") and bolt extra
+          staples onto whatever the AI proposes. */}
+      <div className="stock-refine">
+        <input
+          className="txt"
+          type="text"
+          placeholder="Special requests? Pasture-raised only, use leftover chicken…"
+          value={refineNote}
+          onChange={(e) => setRefineNote(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") reRun(); }}
+          disabled={loading}
+        />
+        <button
+          className="btn-ghost"
+          onClick={reRun}
+          disabled={loading}
+          style={{ whiteSpace: "nowrap" }}
+        >
+          {loading ? "Thinking…" : "🔄 Re-run"}
+        </button>
+      </div>
+      <div className="stock-staples">
+        <div className="gf-mini">Also add staples:</div>
+        <div className="ideas">
+          {STAPLES.slice(0, 14).map((s) => (
+            <button
+              key={s}
+              className={"idea-chip" + (includedStaples[s] ? " recipe-chip" : "")}
+              onClick={() => toggleStaple(s)}
+            >
+              {includedStaples[s] ? "✓ " : "+ "}{s}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {loading && (
-        <div className="note">Reading the dinner plan + your existing list…</div>
+        <div className="note" style={{ marginTop: 12 }}>Reading the dinner plan + your existing list…</div>
       )}
       {error && !loading && (
         <div className="hint" style={{ color: "var(--coral-ink, #c4452a)" }}>{error}</div>

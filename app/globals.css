@@ -231,6 +231,14 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
   }
   .ab-count strong { color: var(--ink); font-weight: 700; }
 
+  /* STOCK REFINE — note + staples picker inside the Stock list sheet */
+  .stock-refine {
+    display: flex; gap: 8px; margin-bottom: 10px; align-items: center;
+  }
+  .stock-refine input.txt { flex: 1; font-size: 14px; padding: 9px 11px; }
+  .stock-staples { margin-bottom: 14px; }
+  .stock-staples .gf-mini { margin-bottom: 5px; }
+
   /* PROMINENT BUILD-FROM-DINNERS CTA on Shopping tab */
   .build-from-dinners {
     appearance: none; cursor: pointer; width: 100%;
@@ -327,6 +335,27 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
     -webkit-tap-highlight-color: transparent;
   }
   .shop-mode-bar .smb-receipt:active { transform: scale(0.96); }
+
+  /* No text-selection on chrome / chip / button surfaces. Stops iOS from
+     popping the Copy/Look Up/Translate menu on long-press. Actual content
+     (meal names, recipe steps, item names, expense names) stays selectable. */
+  .tab-nav, .tab-nav button,
+  .tonight-budget-chip, .budget-strip,
+  .wc-card, .week-carousel,
+  .stock-nudge, .build-from-dinners,
+  .anchor-bar, .ab-select, .ab-label, .ab-count,
+  .shop-mode-bar, .shop-mode-btn, .stock-btn,
+  .hdr-menu-btn, .hdr-menu, .hdr-menu button,
+  .day-tag, .day-today-pill, .day-date, .dash-tom-tag,
+  .row-actions-btn, .swap-btn, .idea-chip,
+  .receipt-summary, .rs-block, .rs-label, .rs-val,
+  .ai-suggestion .ai-meal, .ai-suggestion .ai-reason,
+  .area-head, .elsewhere-toggle, .elsewhere-count,
+  .cached-badge, .cost-delta {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
 
   /* TONIGHT BUDGET CHIP — projected week status, no-LLM */
   .tonight-budget-chip {
